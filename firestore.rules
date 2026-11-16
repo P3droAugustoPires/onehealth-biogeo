@@ -1,0 +1,39 @@
+rules_version = '2';
+// Regras do banco da equipe (Firestore). Cole em Console do Firebase › Firestore › Regras › Publicar.
+// Só entra quem tem o e-mail (verificado) na coleção "membros"; "coord" gerencia membros e responde feedbacks.
+service cloud.firestore {
+  match /databases/{db}/documents {
+    function signed() { return request.auth != null && request.auth.token.email_verified == true; }
+    function em() { return request.auth.token.email.lower(); }
+    function member() { return signed() && exists(/databases/$(db)/documents/membros/$(em())); }
+    function coord() { return member() && get(/databases/$(db)/documents/membros/$(em())).data.papel == 'coord'; }
+    function me() { return request.auth.uid; }
+    function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
+
+    match /membros/{e} {
+      allow get: if signed() && (e == em() || member());
+      allow list: if coord();
+      allow write: if coord();
+    }
+    match /perfis/{uid} {
+      allow read: if member();
+      allow write: if member() && uid == me();
+      allow delete: if coord();
+    }
+    match /projetos/{id} {
+      allow read: if member() && (resource.data.vis == 'equipe' || resource.data.by == me());
+      allow create: if member() && request.resource.data.by == me() && request.resource.data.vis in ['equipe', 'eu'];
+      allow update: if member() && (resource.data.by == me() || coord())
+        && request.resource.data.by == resource.data.by && request.resource.data.vis in ['equipe', 'eu'];
+      allow delete: if member() && (resource.data.by == me() || coord());
+    }
+    match /feedbacks/{id} {
+      allow read: if member();
+      allow create: if member() && request.resource.data.by == me();
+      // autor ou coordenação mudam tudo; os demais só o próprio apoio (votos.<uid>)
+      allow update: if member() && (resource.data.by == me() || coord()
+        || (changed().hasOnly(['votos']) && request.resource.data.votos.diff(resource.data.votos).affectedKeys().hasOnly([me()])));
+      allow delete: if member() && (resource.data.by == me() || coord());
+    }
+  }
+}

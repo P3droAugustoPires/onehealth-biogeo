@@ -16,7 +16,7 @@ const TOURS = {
     {el: '#saveProj', ic: 'device-floppy', t: '9. Guarde o que montou', d: 'Salva espécie, filtros, camada, limites e o enquadramento num <b>projeto</b>, dentro de pastas. Depois é só abrir na aba Projetos.'},
     {el: '#tabs', ic: 'layout-navbar', t: '10. Uma página para cada coisa', d: '<b>Mapa</b> · <b>Painel</b> (gráficos) · <b>Explorar</b> (o que vive aqui, camadas e catálogo) · <b>Análise</b> (ficha da espécie, perguntas e exportar) · <b>Projetos</b>.'},
     {el: '#helpBtn', ic: 'help-circle', t: '11. Ajuda sempre à mão', d: 'Neste botão você reabre o tutorial de cada página, vê as fontes e a metodologia, <b>copia o link da consulta</b> e restaura tudo ao padrão.'},
-    {el: '#helpBtn', ic: 'users-group', t: '12. Trabalhe em equipe', d: 'O link da consulta abre <b>exatamente a mesma tela</b> em qualquer computador: espécie, filtros, camada, limites e enquadramento. A equipe guarda esses links no <b>Espaço da equipe</b> (no Claude), junto com o perfil de cada pessoa e os feedbacks. Ele também fica neste menu.', tip: 'Recebeu um link de projeto? É só abrir: ele entra sozinho na pasta “Recebidos da equipe”.'},
+    {el: '#meBtn', ic: 'users-group', t: '12. Trabalhe em equipe', d: 'Sua foto no topo abre a página <b>Equipe</b>: seu perfil, as pessoas do grupo e os <b>feedbacks</b>. Os projetos que você salva com “A equipe vê” aparecem na hora para todos, na aba <b>Projetos</b>. Para sugerir algo de qualquer página: menu ? › <b>Enviar feedback</b>.', tip: 'Para mandar uma consulta por mensagem a alguém da equipe: menu ? › Copiar link desta consulta.'},
   ],
   stats: [
     {ic: 'chart-dots', t: 'Painel: os gráficos', d: 'O Painel junta o <b>ambiente de um lugar</b> e os <b>números da espécie</b>. Tudo respeita os filtros.'},
@@ -39,14 +39,18 @@ const TOURS = {
   exp: [{ic: 'file-export', t: 'Exportar', d: 'Os registros filtrados em CSV ou GeoJSON, um script R pronto (com obistools, IUCNN…), o clima ERA5 de todos os registros em Python e o script do Earth Engine para a cobertura da terra. É a ponte para a análise completa.'},
     {el: '.grp', ic: 'table-options', t: 'Agrupar e baixar', d: 'Resuma os registros por ecorregião, bioma, UC, ano, mês, espécie, conjunto de dados ou célula de 1° / 0,1° (uma ou duas colunas). Sai em CSV e JSON; por célula, também como grade GeoJSON para o QGIS.'}],
   proj: [
-    {ic: 'folders', t: 'Projetos', d: 'Suas consultas salvas, organizadas em pastas, e o caminho para compartilhar com a equipe.'},
-    {el: '.pj-save', ic: 'device-floppy', t: '1. Salvar o que está na tela', d: 'Dê um nome, escolha a pasta, escreva uma anotação (a hipótese, o que observar) e salve. Os quadradinhos embaixo mostram o que vai junto.'},
-    {el: '.pj-folders', ic: 'folder', t: '2. Pastas', d: 'Crie pastas por tema, artigo ou aula. <b>Exportar</b> gera um arquivo para cópia de segurança ou para outro computador; <b>Importar</b> junta sem apagar nada.'},
-    {el: '.pj-list', ic: 'player-play', t: '3. Abrir, atualizar e mover', d: '<b>Abrir</b> recarrega a página exatamente como estava. <b>Atualizar com o atual</b> substitui pelo que está na tela. Mova entre pastas pelo seletor.'},
-    {el: '.pj-top', ic: 'share', t: '4. Compartilhar com a equipe', d: '<b>Compartilhar</b> copia um link que reproduz o projeto em qualquer computador. Cole no <b>Espaço da equipe › Projetos</b> com um tema e uma anotação: os colegas abrem com um clique e podem sugerir melhorias em <b>Feedbacks</b>.', tip: 'Projetos abertos por link de colegas ficam na pasta “Recebidos da equipe”.'},
+    {ic: 'folders', t: 'Projetos da equipe', d: 'As consultas salvas por você e pela equipe, na nuvem: abrem em qualquer computador, com o mesmo login.'},
+    {el: '.pj-save', ic: 'device-floppy', t: '1. Salvar o que está na tela', d: 'Dê um nome, uma pasta (por tema, artigo ou aula) e uma anotação com a hipótese ou o que observar. Em <b>Quem vê</b>, “A equipe vê” compartilha na hora; “Só eu” guarda só para você.', tip: 'Os quadradinhos embaixo mostram o que vai junto: espécie, camada, área, período, limites e refinamentos.'},
+    {el: '.pj-folders', ic: 'eye', t: '2. Meus, da equipe e pastas', d: '<b>Meus</b> mostra o que você salvou; <b>Da equipe</b>, o que os colegas compartilharam. Embaixo, as pastas. <b>Exportar</b> gera um arquivo de cópia de segurança; <b>Importar</b> traz de volta.'},
+    {el: '.pj-list', ic: 'player-play', t: '3. Abrir e continuar', d: '<b>Abrir</b> recarrega a plataforma exatamente como estava quando o projeto foi salvo, com o nome de quem salvou. Nos seus projetos: <b>Atualizar com o atual</b>, renomear, mudar de pasta, compartilhar ou deixar só para você.'},
+    {el: '.pj-top', ic: 'link', t: '4. Mandar por mensagem', d: '<b>Copiar link</b> gera um endereço que abre a mesma consulta. Útil para mandar no chat do grupo; quem abrir precisa entrar com o e-mail da equipe.'},
+  ],
+  equipe: [
+    {el: '.eq-nav', ic: 'users-group', t: 'Equipe', d: '<b>Meu perfil</b>: foto, nome completo, e-mail, instituição e interesses. <b>Pessoas</b>: quem está no grupo. <b>Feedbacks</b>: sugestões e problemas, com apoio dos colegas e resposta da coordenação. Quem coordena vê também <b>Membros</b>, a lista de e-mails que podem entrar.'},
+    {el: '#eqOut', ic: 'logout', t: 'Sair', d: 'Em computador compartilhado, saia ao terminar. Para entrar de novo é só o e-mail: chega um link de acesso, sem senha.'},
   ],
 };
-const PAGE = {mapa: 'Mapa', stats: 'Painel', ficha: 'Análise › Espécie', busca: 'Explorar', perg: 'Análise › Perguntas', exp: 'Análise › Exportar', proj: 'Projetos'};
+const PAGE = {mapa: 'Mapa', stats: 'Painel', ficha: 'Análise › Espécie', busca: 'Explorar', perg: 'Análise › Perguntas', exp: 'Análise › Exportar', proj: 'Projetos', equipe: 'Equipe'};
 const T = {steps: [], i: 0, prev: null};
 
 function start(steps) {
@@ -99,7 +103,7 @@ addEventListener('keydown', e => {
 
 const page = v => v === 'analise' ? [{view: 'ficha', el: '.an-nav', ic: 'microscope', t: 'Análise: três seções', d: 'A ficha da <b>Espécie</b>, as <b>Perguntas</b> geradas dos dados e o <b>Exportar</b> (CSV, R, ERA5, Earth Engine) ficam juntos aqui. Troque de seção por estes botões.'}, ...['ficha', 'perg', 'exp'].flatMap(page)]
   : (TOURS[v] || []).map(s => ({view: v, ...s}));
-const all = () => ['mapa', 'stats', 'busca', 'analise', 'proj'].flatMap(page);
+const all = () => ['mapa', 'stats', 'busca', 'analise', 'proj', 'equipe'].flatMap(page);
 // menu de ajuda
 function menu(open) { $('helpMenu').hidden = !open; $('helpBtn').setAttribute('aria-expanded', open); }
 $('helpBtn').onclick = e => { e.stopPropagation(); menu($('helpMenu').hidden); };
@@ -109,5 +113,7 @@ $('tourAll').onclick = () => start(all());
 $('helpMenu').addEventListener('click', e => { if (e.target.closest('button')) menu(false); });
 // primeira visita: abre o tutorial do mapa
 let first = false; try { first = !localStorage.getItem('ohb-tour'); } catch { /* sem armazenamento: não insiste */ }
-if (first && location.hash !== '#teste') setTimeout(() => S.view === 'mapa' && $('tour').hidden && start(page('mapa')), 1500);
+if (first && location.hash !== '#teste') { // espera a pessoa entrar (a tela de entrada da equipe cobre tudo até lá)
+  const w = setInterval(() => { if (!$('gate')?.hidden) return; clearInterval(w); setTimeout(() => S.view === 'mapa' && $('tour').hidden && start(page('mapa')), 1200); }, 500);
+}
 })();

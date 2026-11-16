@@ -61,15 +61,17 @@ Se o atalho sumir, recrie apontando para `pyw.exe "…\OneHealthBioGeo\iniciar.p
 O menu ? → "Copiar link desta consulta" gera um link `#proj=…` com a consulta inteira (espécie, filtros, camada e o ano/dia, limites, mapa-base e o enquadramento).
 
 ## Equipe: compartilhar com outras pessoas
-São duas peças:
-- **Plataforma** (esta pasta): um site estático, publicado em https://p3droaugustopires.github.io/onehealth-biogeo/ (GitHub Pages do repositório `P3droAugustoPires/onehealth-biogeo`). Não precisa de conta nem de servidor próprio: as consultas vão direto do navegador para GBIF, OBIS, Open-Meteo etc. Depois de editar, rode `python publicar.py "o que mudou"` nesta pasta: ele copia só os arquivos do site para `C:\Users\joise\onehealth-biogeo-site` (repositório fora do OneDrive, sem `vendor/`) e envia ao GitHub; o site atualiza em cerca de um minuto.
-- **Espaço da equipe** (`equipe/hub.html`, publicado no Claude em https://claude.ai/artifact/WKdATxfAczGddNETdcef9n): perfil com foto, nome completo e e-mail; projetos compartilhados; feedbacks com apoio, situação e resposta; aba Equipe. Os dados ficam no banco do artifact. A plataforma não roda dentro do Claude porque o artifact bloqueia acesso às APIs e aos mapas.
+Tudo fica dentro da plataforma, publicada em https://p3droaugustopires.github.io/onehealth-biogeo/ (GitHub Pages do repositório `P3droAugustoPires/onehealth-biogeo`, fora do Google pela meta `noindex`). Depois de editar, rode `python publicar.py "o que mudou"` nesta pasta: ele copia só os arquivos do site para `C:\Users\joise\onehealth-biogeo-site` (repositório fora do OneDrive, sem `vendor/`) e envia ao GitHub; o site atualiza em cerca de um minuto.
 
-Como eles se ligam: na plataforma, aba Projetos → **Compartilhar** copia o link `#proj=…`. No Espaço, em Projetos, cole o link e dê um tema e uma anotação. Os colegas clicam em **Abrir na plataforma** e a consulta abre igual. Ela também é guardada na pasta "Recebidos da equipe".
+Login e dados da equipe: Firebase (projeto `onehealth-biogeo`, plano gratuito Spark), feito em `equipe.js`.
+- **Entrada**: a tela de entrada pede o e-mail (chega um link de acesso, sem senha) ou "Entrar com Google". Só passa quem está na lista **Membros**; os demais veem "sem acesso".
+- **Página Equipe** (botão com a foto no topo): Meu perfil (foto, nome completo, e-mail, instituição, função, área, bio), Pessoas, Feedbacks (tipo, página, apoio, situação e resposta da coordenação) e Membros (só coordenação: adicionar e-mail, trocar papel, remover).
+- **Projetos**: salvos na nuvem, com "Quem vê": a equipe ou só eu. Cada um abre a consulta igual em qualquer computador; "Copiar link" ainda gera o `#proj=…`. Os projetos antigos do navegador aparecem num aviso para enviar à nuvem.
+- **Feedback**: menu ? → Enviar feedback, já com a página atual.
 
-Acesso: no Espaço, Compartilhar → convide pelo e-mail da conta Claude (gratuita ou paga) como **Editor**. Leitor só vê, e um link público dá só leitura a quem é de fora. No Início do Espaço, o quadro Coordenação (visível só para o dono) guarda o endereço público da plataforma.
+Convidar alguém: Equipe → Membros → e-mail da pessoa → Adicionar; depois mande o link do site. Papel `coord` gerencia membros e responde feedbacks.
 
-Regras do banco: cada pessoa grava só o próprio perfil, os próprios projetos, feedbacks e apoios. O dono pode editar ou apagar tudo e responder feedbacks; o endereço da plataforma (`config/app`) é só do dono. Em `projetos.js`, `HUB` é o link do Espaço que aparece no menu ?.
+Banco (Firestore, São Paulo): coleções `membros/{email}` (`papel`), `perfis/{uid}`, `projetos/{id}` (estado em `st`, JSON) e `feedbacks/{id}` (`votos.{uid}`). As regras estão em `firestore.rules`; ao mudar, cole em Console do Firebase › Firestore › Regras › Publicar. A configuração do Firebase em `equipe.js` é pública por natureza; quem protege os dados são as regras. Domínios autorizados do login: `localhost` e `p3droaugustopires.github.io`.
 
 ## Arquivos
 - `index.html`, `app.css`, `app.js`: a plataforma. Ao editar CSS/JS, aumente o `?v=` no `index.html` para furar o cache.
@@ -77,7 +79,7 @@ Regras do banco: cada pessoa grava só o próprio perfil, os próprios projetos,
 - `iniciar.pyw`: inicializador usado pelo atalho da Área de Trabalho
 - `data/teow.json`: ecorregiões terrestres do WWF (zip oficial TEOW), simplificadas para ~3 km (4,7 MB)
 - `data/meow.json`: ecorregiões marinhas MEOW (do repositório gbif-ecoregions), simplificadas (0,2 MB)
-- `projetos.js`: aba Projetos, links `#proj=` (compartilhar e abrir) e Restaurar padrão · `tutorial.js`: tutoriais e menu de ajuda
+- `projetos.js`: aba Projetos (salvar na nuvem, pastas, quem vê), links `#proj=` e Restaurar padrão · `tutorial.js`: tutoriais e menu de ajuda
 - `onehealth.js`: cartão Interface One Health (pessoas, floresta, anomalias, co-ocorrência) e marcas no mapa
 - `analise.js`: atalhos, filtro cruzado dos gráficos, área desenhada, perfil ambiental + adequabilidade, comparador e legenda recolhível
 - `recorte3d.js`: o recorte 3D (Three.js 0.160 via importmap no `index.html`)
@@ -85,7 +87,8 @@ Regras do banco: cada pessoa grava só o próprio perfil, os próprios projetos,
 - `grupos.js`: 43 ícones de silhueta próprios (SVG 24×24, cor herdada), os grupos da listagem com as chaves do GBIF e `grpIc()`, que escolhe o ícone pela classificação
 - `clima.js`: Explorar › Clima dos lugares
 - `publicar.py`: publica o site no GitHub Pages
-- `equipe/hub.html`: o Espaço da equipe (artifact do Claude, com banco de dados). Para mudar, edite e publique de novo no mesmo endereço
+- `equipe.js`: login, página Equipe, feedbacks e projetos na nuvem (Firebase) · `firestore.rules`: regras do banco
+- `equipe/hub.html`: o antigo Espaço da equipe no Claude, aposentado
 - Ícones de interface: Tabler Icons (webfont via jsdelivr); a pasta `icons/` e `ICONES-PROMPTS.md` não são mais usadas
 - `vendor/`: repositórios de referência (robis, obistools, IUCNN, MapBiomas, gbif-ecoregions)
 

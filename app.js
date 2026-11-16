@@ -1459,6 +1459,7 @@ function renderView() {
   if (v === 'mapa') return renderDetails();
   if (v === 'busca') { renderKChips(); return xShow(S.xtab || 'lugar'); }
   if (v === 'proj') return renderProj(el); // projetos.js
+  if (v === 'equipe') return window.renderEquipe?.(el); // equipe.js
   const none = S.taxon ? 'Nenhum registro para esta consulta. Tente outra área, outro período ou a fonte GBIF nos <b>Filtros</b>.' : 'Pesquise uma espécie na barra do topo ou use <b>Explorar</b>.';
   if (v === 'stats') { // o ambiente do local aparece sempre; os gráficos da espécie, quando há registros
     el.innerHTML = `<div class="wrap">${envCard()}<div id="spStats">${S.recs.length ? '' : `<div class="card empty">${ti('search')}${none}</div>`}</div></div>`;

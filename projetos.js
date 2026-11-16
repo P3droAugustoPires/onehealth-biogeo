@@ -1,4 +1,4 @@
-// ---------- Projetos: consultas salvas em pastas (neste navegador) e "Restaurar padrão" ----------
+// ---------- Projetos: consultas salvas na nuvem da equipe, em pastas, e "Restaurar padrão" ----------
 // Um projeto guarda espécie, fonte, área, período, refinamentos, camada (e o ano/dia mostrado), limites, mapa-base e o enquadramento.
 // Abrir um projeto (ou restaurar) recarrega a página: começa limpo, sem sobra da consulta anterior.
 (() => {
@@ -29,25 +29,23 @@ function restoreAll() {
 }
 $('restoreAll').onclick = restoreAll; $('restoreF').onclick = restoreAll;
 
-// ---------- link de compartilhamento: #proj=<JSON em base64url> ----------
-// O Espaço da equipe (equipe/hub.html, publicado no Claude) guarda esses links; abrir um deles aqui reproduz a consulta.
+
+// ---------- link de projeto: #proj=<JSON em base64url> ----------
+// Para mandar uma consulta por mensagem; dentro da equipe, os projetos salvos já aparecem para todos.
 const enc = o => btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(o)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const dec = c => { try { return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(c.replace(/-/g, '+').replace(/_/g, '/')), x => x.charCodeAt(0)))); } catch { return null; } };
 const summ = s => [s.taxon || s.sp || 'sem espécie', THEMES[s.th]?.n && THEMES[s.th].n + (s.t != null ? ' · ' + s.t : ''), AREAS[s.area]?.label?.replace(/^(no|na) /, ''),
   s.y0 || s.y1 ? `${s.y0 || '…'}–${s.y1 || '…'}` : '', s.wms.length ? s.wms.length + ' limite(s)' : '', nF(s) ? nF(s) + ' refinamento(s)' : ''].filter(Boolean);
-const shareLink = p => location.origin + location.pathname + '#proj=' + enc({n: p.name, nt: p.note || '', s: p.state, d: summ(p.state)});
+const shareLink = (name, s) => location.origin + location.pathname + '#proj=' + enc({n: name, s, d: summ(s)});
 const okState = s => s && typeof s === 'object' && s.F && Array.isArray(s.F.basis) && Array.isArray(s.F.mon) && Array.isArray(s.wms) && isFinite(s.lat) && isFinite(s.lng) && isFinite(s.z);
+const copy = (link, msg) => navigator.clipboard?.writeText(link).then(() => toast(msg), () => prompt('Copie o link:', link)) ?? prompt('Copie o link:', link);
 const inc = location.hash.match(/(?:^#|&)proj=([A-Za-z0-9_-]+)/);
 if (inc) {
   const o = dec(inc[1]);
-  if (okState(o?.s)) { // guarda em “Recebidos da equipe” (sem duplicar) e abre
-    const name = String(o.n || 'Projeto da equipe').slice(0, 90);
-    if (!P.folders.some(f => f.id === 'recebidos')) P.folders.push({id: 'recebidos', name: 'Recebidos da equipe'});
-    if (!P.items.some(x => x.folder === 'recebidos' && JSON.stringify(x.state) === JSON.stringify(o.s)))
-      P.items.push({id: uid(), folder: 'recebidos', name, note: String(o.nt || '').slice(0, 600), at: Date.now(), state: o.s});
-    store(); openState({...o.s, name});
-  } else { history.replaceState(null, '', location.pathname + location.search); setTimeout(() => toast('Esse link de projeto está incompleto. Copie de novo no Espaço da equipe.'), 800); }
+  if (okState(o?.s)) openState({...o.s, name: String(o.n || 'Projeto').slice(0, 90)});
+  else { history.replaceState(null, '', location.pathname + location.search); setTimeout(() => toast('Esse link de projeto está incompleto. Peça para copiarem de novo.'), 800); }
 }
+
 
 addEventListener('hashchange', () => { if (/(^#|&)proj=/.test(location.hash)) location.reload(); }); // link colado com a plataforma já aberta
 
@@ -70,8 +68,8 @@ if (pend) {
   toast(`Projeto aberto: ${pend.name || 'sem nome'}`);
 }
 
-// ---------- página ----------
-const fname = id => P.folders.find(f => f.id === id)?.name || 'Geral';
+
+// ---------- página: projetos na nuvem da equipe (equipe.js → EQ) ----------
 const nF = s => s.F.basis.length + s.F.mon.length + !!s.F.ds + !!s.F.uc + !!s.F.unc + !!s.F.sp + !s.F.drop + !s.F.dedup + !!s.F.king + !!s.F.yr + !!s.F.box + !!s.F.eco;
 const chips = s => [
   s.taxon || s.sp ? `${ti('paw')} <i>${esc(s.taxon || s.sp)}</i>` : `${ti('paw')} sem espécie`,
@@ -80,91 +78,106 @@ const chips = s => [
   s.y0 || s.y1 ? `${ti('calendar')} ${esc(s.y0 || '…')}–${esc(s.y1 || '…')}` : '',
   s.wms.length ? `${ti('shield-check')} ${s.wms.length} limite(s)` : '',
   nF(s) ? `${ti('adjustments-horizontal')} ${nF(s)} refinamento(s)` : ''].filter(Boolean).map(x => `<span>${x}</span>`).join('');
-const folderOpts = sel => P.folders.map(f => `<option value="${f.id}" ${f.id === sel ? 'selected' : ''}>${esc(f.name)}</option>`).join('');
-const card = p => `<article class="card pj-card" data-id="${p.id}">
-  <div class="pj-ct"><div><h3>${esc(p.name)}</h3><small>${ti('folder')} ${esc(fname(p.folder))} · salvo em ${new Date(p.at).toLocaleString('pt-BR', {dateStyle: 'short', timeStyle: 'short'})}</small></div>
-    <div class="pj-top"><button class="btn soft" data-a="share" title="Copia um link que abre esta consulta em qualquer computador">${ti('share')} Compartilhar</button><button class="btn" data-a="open">${ti('player-play')} Abrir</button></div></div>
-  ${p.note ? `<p class="pj-note">${ti('notes')} ${esc(p.note)}</p>` : ''}
-  <div class="pj-now">${chips(p.state)}</div>
-  <div class="pj-acts"><button data-a="upd" title="Substitui pelo que está na tela agora">${ti('refresh')} Atualizar com o atual</button>
-    <label>${ti('folder-symlink')}<select data-a="move" aria-label="Mover para a pasta">${folderOpts(p.folder)}</select></label>
-    <button data-a="note">${ti('pencil')} Renomear / anotar</button><button data-a="del" class="danger">${ti('trash')} Apagar</button></div>
-</article>`;
+const stOf = p => { try { const s = JSON.parse(p.st); return okState(s) ? s : null; } catch { return null; } };
+let scope = 'all', pasta = '';
+const EQ = () => window.EQ?.member ? window.EQ : null;
+const canEdit = p => EQ() && (p.by === EQ().u.uid || EQ().coord);
+const visible = () => (EQ()?.allProj() || []).filter(p => stOf(p) && (scope === 'all' || (scope === 'mine' ? p.by === EQ().u.uid : p.by !== EQ().u.uid)));
+const card = p => { const s = stOf(p), e = EQ(); return `<article class="card pj-card" data-id="${esc(p.id)}">
+  <div class="pj-ct"><div><h3>${esc(p.nome)}</h3><small>${e.who(p.by, p.upd || p.at)} · ${ti('folder')} ${esc(p.pasta || 'Geral')} · ${p.vis === 'eu' ? `${ti('lock')} só eu` : `${ti('users-group')} equipe`}</small></div>
+    <div class="pj-top"><button class="btn soft" data-a="link" title="Copia um link para mandar por mensagem">${ti('link')} Copiar link</button><button class="btn" data-a="open">${ti('player-play')} Abrir</button></div></div>
+  ${p.nota ? `<p class="pj-note">${ti('notes')} ${esc(p.nota)}</p>` : ''}
+  <div class="pj-now">${chips(s)}</div>
+  ${canEdit(p) ? `<div class="pj-acts"><button data-a="upd" title="Substitui pelo que está na tela agora">${ti('refresh')} Atualizar com o atual</button>
+    <button data-a="edit">${ti('pencil')} Renomear, pasta, anotação</button>
+    <button data-a="vis">${p.vis === 'eu' ? `${ti('users-group')} Compartilhar com a equipe` : `${ti('lock')} Deixar só para mim`}</button>
+    <button data-a="del" class="danger">${ti('trash')} Apagar</button></div>` : ''}
+</article>`; };
 
-window.renderProj = el => {
-  const st = state(), items = P.items.filter(x => cur === 'all' || x.folder === cur).sort((a, b) => b.at - a.at);
-  el.innerHTML = `<div class="wrap">
-  <div class="card hero"><h2>${ti('folders')} Projetos</h2>
-    <p class="lead">Guarde a consulta da tela (espécie, filtros, camada e o ano/dia mostrado, limites, mapa-base e o enquadramento) em pastas e reabra quando quiser.
-      Fica salvo neste navegador. Para a equipe, clique em <b>Compartilhar</b> no projeto e cole o link no <b>Espaço da equipe</b>; quem abrir o link vê a mesma consulta no computador dela.</p>
-    <div class="pj-save">
-      <input id="pjName" placeholder="Nome do projeto" value="${esc([st.taxon, THEMES[st.th]?.n].filter(Boolean).join(' · ') || 'Minha consulta')}" aria-label="Nome do projeto">
-      <select id="pjFolder" aria-label="Pasta">${folderOpts(cur === 'all' ? 'geral' : cur)}</select>
-      <input id="pjNote" placeholder="Anotação: hipótese, o que observar… (opcional)" aria-label="Anotação">
-      <button class="btn lime" id="pjSave">${ti('device-floppy')} Salvar estado atual</button>
-    </div>
-    <div class="pj-now on-dark">${chips(st)}</div>
-  </div>
+function drawList() {
+  const body = $('pjBody'), e = EQ(); if (!body) return;
+  if (!e) return body.innerHTML = `<div class="card empty">${ti('lock')}Entre com seu e-mail para ver e salvar projetos.</div>`;
+  const all = e.allProj().filter(stOf), me = e.u.uid, vis = visible(), pastas = [...new Set(vis.map(p => p.pasta || 'Geral'))].sort((a, b) => a.localeCompare(b, 'pt'));
+  if (pasta && !pastas.includes(pasta)) pasta = '';
+  const items = vis.filter(p => !pasta || (p.pasta || 'Geral') === pasta), n = f => all.filter(f).length;
+  const local = P.items.length;
+  $('pjPastas').innerHTML = [...new Set(all.map(p => p.pasta || 'Geral'))].map(x => `<option value="${esc(x)}">`).join('');
+  body.innerHTML = `${local ? `<div class="card pj-migr">${ti('cloud-upload')}<span>Há <b>${local}</b> projeto(s) salvos só neste navegador, de antes da equipe. Envie para a nuvem para não perdê-los (ficam como “só eu”; depois você compartilha os que quiser).</span><button class="btn" id="pjMigr">Enviar para a nuvem</button></div>` : ''}
   <div class="pj-grid">
-    <aside class="card pj-folders"><h3>${ti('folder')} Pastas</h3>
-      <button class="pj-f ${cur === 'all' ? 'on' : ''}" data-f="all">${ti('stack-2')}<span>Todos os projetos</span><b>${P.items.length}</b></button>
-      ${P.folders.map(f => `<div class="pj-frow"><button class="pj-f ${cur === f.id ? 'on' : ''}" data-f="${f.id}">${ti(cur === f.id ? 'folder-open' : 'folder')}<span>${esc(f.name)}</span><b>${P.items.filter(x => x.folder === f.id).length}</b></button>
-        ${f.id === 'geral' ? '' : `<button class="icon-btn" data-fren="${f.id}" title="Renomear pasta">${ti('pencil')}</button><button class="icon-btn" data-fdel="${f.id}" title="Apagar pasta">${ti('trash')}</button>`}</div>`).join('')}
-      <button class="btn-reset" id="pjNewF">${ti('folder-plus')} Nova pasta</button>
+    <aside class="card pj-folders"><h3>${ti('eye')} Mostrar</h3>
+      ${[['all', 'stack-2', 'Todos', n(() => true)], ['mine', 'user', 'Meus', n(p => p.by === me)], ['team', 'users-group', 'Da equipe', n(p => p.by !== me)]]
+        .map(([k, ic, t, c]) => `<button class="pj-f ${scope === k ? 'on' : ''}" data-s="${k}">${ti(ic)}<span>${t}</span><b>${c}</b></button>`).join('')}
+      <h3 style="margin-top:12px">${ti('folder')} Pastas</h3>
+      <button class="pj-f ${!pasta ? 'on' : ''}" data-p="">${ti('folders')}<span>Todas</span><b>${vis.length}</b></button>
+      ${pastas.map(x => `<button class="pj-f ${pasta === x ? 'on' : ''}" data-p="${esc(x)}">${ti(pasta === x ? 'folder-open' : 'folder')}<span>${esc(x)}</span><b>${vis.filter(p => (p.pasta || 'Geral') === x).length}</b></button>`).join('')}
       <div class="pj-io"><button class="btn soft" id="pjExp">${ti('download')} Exportar</button>
         <label class="btn soft">${ti('upload')} Importar<input type="file" id="pjImp" accept=".json,application/json" hidden></label></div>
     </aside>
     <section class="pj-list">${items.length ? items.map(card).join('')
-      : `<div class="card empty">${ti('folder-open')}Nenhum projeto ${cur === 'all' ? 'ainda' : 'nesta pasta'}.<br>Monte uma consulta no mapa (espécie, camada, filtros) e clique em <b>Salvar estado atual</b>, aqui ou no ícone ${ti('device-floppy')} do topo.</div>`}</section>
-  </div></div>`;
-  const re = () => renderProj(el), get = b => P.items.find(x => x.id === b.closest('[data-id]').dataset.id);
-  $('pjSave').onclick = () => {
-    const name = $('pjName').value.trim() || 'Minha consulta';
-    P.items.push({id: uid(), folder: $('pjFolder').value, name, note: $('pjNote').value.trim(), at: Date.now(), state: st});
-    if (store()) { toast(`Salvo em “${fname($('pjFolder').value)}”.`); re(); }
-  };
-  el.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { cur = b.dataset.f; re(); });
-  $('pjNewF').onclick = () => { const n = prompt('Nome da nova pasta:'); if (!n?.trim()) return; const id = uid(); P.folders.push({id, name: n.trim()}); cur = id; store(); re(); };
-  el.querySelectorAll('[data-fren]').forEach(b => b.onclick = () => { const f = P.folders.find(x => x.id === b.dataset.fren), n = prompt('Novo nome da pasta:', f.name); if (n?.trim()) { f.name = n.trim(); store(); re(); } });
-  el.querySelectorAll('[data-fdel]').forEach(b => b.onclick = () => {
-    const f = P.folders.find(x => x.id === b.dataset.fdel), k = P.items.filter(x => x.folder === f.id).length;
-    if (!confirm(`Apagar a pasta “${f.name}”?${k ? `\nOs ${k} projeto(s) dela vão para “Geral”.` : ''}`)) return;
-    P.items.forEach(x => { if (x.folder === f.id) x.folder = 'geral'; }); P.folders = P.folders.filter(x => x !== f); cur = 'all'; store(); re();
+      : `<div class="card empty">${ti('folder-open')}${scope === 'team' ? 'Ninguém da equipe compartilhou projetos ainda.' : 'Nenhum projeto aqui ainda.'}<br>Monte uma consulta no mapa (espécie, camada, filtros) e clique em <b>Salvar</b> no alto desta página ou no ícone ${ti('device-floppy')} do topo.</div>`}</section>
+  </div>`;
+  body.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { scope = b.dataset.s; drawList(); });
+  body.querySelectorAll('[data-p]').forEach(b => b.onclick = () => { pasta = b.dataset.p; drawList(); });
+  const get = b => e.allProj().find(x => x.id === b.closest('[data-id]').dataset.id);
+  body.querySelectorAll('[data-a]').forEach(b => b.onclick = () => {
+    const p = get(b), a = b.dataset.a; if (!p) return;
+    const save = (ch, ok) => e.saveProj({...p, ...ch, ok});
+    if (a === 'open') openState({...stOf(p), name: p.nome});
+    if (a === 'link') copy(shareLink(p.nome, stOf(p)), 'Link copiado: quem abrir vê a mesma consulta.');
+    if (a === 'upd' && confirm(`Substituir “${p.nome}” pelo que está na tela agora?`)) { const s = state(); save({st: JSON.stringify(s), d: summ(s)}, 'Projeto atualizado.'); }
+    if (a === 'edit') {
+      const nome = prompt('Nome do projeto:', p.nome); if (nome == null) return;
+      const pa = prompt('Pasta:', p.pasta || 'Geral'); if (pa == null) return;
+      const nota = prompt('Anotação (pode deixar vazio):', p.nota || ''); if (nota == null) return;
+      save({nome: nome.trim() || p.nome, pasta: pa.trim() || 'Geral', nota: nota.trim()}, 'Projeto atualizado.');
+    }
+    if (a === 'vis') save({vis: p.vis === 'eu' ? 'equipe' : 'eu'}, p.vis === 'eu' ? 'Agora a equipe vê este projeto.' : 'Agora só você vê este projeto.');
+    if (a === 'del' && confirm(`Apagar o projeto “${p.nome}”? Não dá para desfazer.`)) e.delProj(p.id);
   });
-  el.querySelectorAll('[data-a]').forEach(b => {
-    const a = b.dataset.a;
-    if (a === 'move') return b.onchange = () => { get(b).folder = b.value; store(); re(); };
-    b.onclick = () => {
-      const p = get(b);
-      if (a === 'open') openState({...p.state, name: p.name});
-      if (a === 'share') {
-        const link = shareLink(p), ok = () => toast('Link copiado. Cole no Espaço da equipe › Projetos.');
-        navigator.clipboard?.writeText(link).then(ok, () => prompt('Copie o link do projeto:', link)) ?? prompt('Copie o link do projeto:', link);
-      }
-      if (a === 'upd' && confirm(`Substituir “${p.name}” pelo que está na tela agora?`)) { p.state = state(); p.at = Date.now(); store(); re(); toast('Projeto atualizado.'); }
-      if (a === 'note') { const n = prompt('Nome do projeto:', p.name); if (n == null) return; const t = prompt('Anotação (pode deixar vazio):', p.note || ''); p.name = n.trim() || p.name; if (t != null) p.note = t.trim(); store(); re(); }
-      if (a === 'del' && confirm(`Apagar o projeto “${p.name}”? Não dá para desfazer.`)) { P.items = P.items.filter(x => x !== p); store(); re(); }
-    };
-  });
-  $('pjExp').onclick = () => download(`projetos-onehealth-biogeo-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(P, null, 1), 'application/json');
-  $('pjImp').onchange = async e => { // junta ao que já existe; nada é apagado
+  const up = (list, vis) => Promise.allSettled(list.map(x => e.saveProj({nome: x.nome, pasta: x.pasta, nota: x.nota, vis, st: JSON.stringify(x.s), d: summ(x.s)})))
+    .then(r => r.filter(x => x.status === 'fulfilled').length);
+  if ($('pjMigr')) $('pjMigr').onclick = () => up(P.items.filter(x => okState(x.state)).map(x => ({nome: x.name, pasta: P.folders.find(f => f.id === x.folder)?.name || 'Geral', nota: x.note, s: x.state})), 'eu')
+    .then(k => { if (k) { P = empty(); store(); } toast(`${k} projeto(s) enviados para a nuvem.`); drawList(); });
+  $('pjExp').onclick = () => download(`projetos-onehealth-biogeo-${new Date().toISOString().slice(0, 10)}.json`,
+    JSON.stringify({projetos: items.map(p => ({nome: p.nome, pasta: p.pasta, nota: p.nota, state: stOf(p)}))}, null, 1), 'application/json');
+  $('pjImp').onchange = async ev => { // aceita o arquivo novo ({projetos}) e o antigo ({folders, items}); entram como “só eu”
     try {
-      const d = JSON.parse(await e.target.files[0].text());
-      if (!Array.isArray(d?.folders) || !Array.isArray(d.items)) throw new Error('não é um arquivo de projetos');
-      d.folders.forEach(f => P.folders.some(x => x.id === f.id) || P.folders.push({id: String(f.id), name: String(f.name)}));
-      let n = 0;
-      d.items.forEach(x => { if (x?.state?.F && !P.items.some(y => y.id === x.id)) { P.items.push({...x, folder: P.folders.some(f => f.id === x.folder) ? x.folder : 'geral'}); n++; } });
-      store(); re(); toast(`${n} projeto(s) importado(s).`);
+      const d = JSON.parse(await ev.target.files[0].text());
+      const L = Array.isArray(d?.projetos) ? d.projetos.map(x => ({nome: x.nome, pasta: x.pasta, nota: x.nota, s: x.state}))
+        : Array.isArray(d?.items) ? d.items.map(x => ({nome: x.name, pasta: d.folders?.find(f => f.id === x.folder)?.name, nota: x.note, s: x.state})) : null;
+      if (!L) throw new Error('não é um arquivo de projetos');
+      const k = await up(L.filter(x => okState(x.s)).map(x => ({nome: String(x.nome || 'Projeto').slice(0, 90), pasta: String(x.pasta || 'Geral').slice(0, 40), nota: String(x.nota || '').slice(0, 600), s: x.s})), 'eu');
+      toast(`${k} projeto(s) importado(s) como “só eu”.`);
     } catch (err) { toast('Importar: ' + err.message); }
   };
+}
+document.addEventListener('eq', () => S.view === 'proj' && drawList());
+
+window.renderProj = el => {
+  const st = state();
+  el.innerHTML = `<div class="wrap">
+  <div class="card hero"><h2>${ti('folders')} Projetos</h2>
+    <p class="lead">Guarde a consulta da tela (espécie, filtros, camada e o ano/dia mostrado, limites, mapa-base e o enquadramento).
+      Com <b>A equipe</b>, todos do grupo veem e abrem na hora, de qualquer computador. Com <b>Só eu</b>, fica guardado só para você.</p>
+    <div class="pj-save">
+      <input id="pjName" placeholder="Nome do projeto" value="${esc([st.taxon, THEMES[st.th]?.n].filter(Boolean).join(' · ') || 'Minha consulta')}" aria-label="Nome do projeto" maxlength="90">
+      <input id="pjFolder" placeholder="Pasta (ex.: Zoonoses)" list="pjPastas" aria-label="Pasta" maxlength="40" value="${esc(pasta || '')}"><datalist id="pjPastas"></datalist>
+      <input id="pjNote" placeholder="Anotação: hipótese, o que observar… (opcional)" aria-label="Anotação" maxlength="600">
+      <select id="pjVis" aria-label="Quem vê"><option value="equipe">A equipe vê</option><option value="eu">Só eu</option></select>
+      <button class="btn lime" id="pjSave">${ti('device-floppy')} Salvar</button>
+    </div>
+    <div class="pj-now on-dark">${chips(st)}</div>
+  </div>
+  <div id="pjBody"></div></div>`;
+  $('pjSave').onclick = () => {
+    const e = EQ(); if (!e) return toast('Entre com seu e-mail para salvar.');
+    const vis = $('pjVis').value;
+    e.saveProj({nome: $('pjName').value.trim() || 'Minha consulta', pasta: $('pjFolder').value.trim() || 'Geral', nota: $('pjNote').value.trim(), vis, st: JSON.stringify(st), d: summ(st),
+      ok: vis === 'eu' ? 'Projeto salvo (só você vê).' : 'Projeto salvo e compartilhado com a equipe.'}).then(() => { $('pjNote').value = ''; }, () => {});
+  };
+  drawList();
 };
 // menu ? → “Copiar link desta consulta”: o link completo (filtros, camada, limites, enquadramento), não só a espécie
-$('share').onclick = () => {
-  const link = shareLink({name: [S.taxon?.name, THEMES[TH.cur]?.n].filter(Boolean).join(' · ') || 'Consulta', note: '', state: state()});
-  navigator.clipboard?.writeText(link).then(() => toast('Link da consulta copiado: abre igual em qualquer computador.'), () => prompt('Copie o link:', link)) ?? prompt('Copie o link:', link);
-};
-// endereço do Espaço da equipe (artifact no Claude); vazio esconde o item do menu
-const HUB = 'https://claude.ai/artifact/WKdATxfAczGddNETdcef9n';
-if (HUB) { $('hubLink').href = HUB; $('hubLink').hidden = false; }
+$('share').onclick = () => copy(shareLink([S.taxon?.name, THEMES[TH.cur]?.n].filter(Boolean).join(' · ') || 'Consulta', state()), 'Link da consulta copiado: abre igual em qualquer computador.');
 $('saveProj').onclick = () => { showView('proj'); setTimeout(() => { $('pjName')?.focus(); $('pjName')?.select(); }, 50); };
 })();
