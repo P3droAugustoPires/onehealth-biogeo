@@ -788,7 +788,8 @@ table.cl { width: 100%; border-collapse: collapse; font-size: 13px; font-variant
 .gate-or::before, .gate-or::after { content: ""; flex: 1; height: 1px; background: var(--line) }
 .gate .row, .eq-ph .row, .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center }
 .mut { color: var(--mut) } .small { font-size: 12.5px }
-.me-btn { flex: none; display: flex; align-items: center; gap: 7px; border: 1px solid rgba(255, 255, 255, .22); background: rgba(255, 255, 255, .06); color: #fff; border-radius: 99px; padding: 3px 12px 3px 3px; font-size: 13.5px; font-weight: 600 }
+.me-btn { flex: none; display: flex; align-items: center; gap: 7px; border: 1px solid rgba(255, 255, 255, .22); background: rgba(255, 255, 255, .06); color: #fff; border-radius: 99px; padding: 3px; font-size: 13.5px; font-weight: 600 }
+.me-btn span { display: none } /* a aba Equipe já tem o nome */
 .me-btn:hover { background: rgba(255, 255, 255, .16) }
 .me-btn[hidden] { display: none }
 .me-btn img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover }
