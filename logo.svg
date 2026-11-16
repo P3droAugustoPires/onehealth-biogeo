@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="One Health BioGeo">
+  <defs><clipPath id="c"><circle cx="60" cy="60" r="54"/></clipPath></defs>
+  <g clip-path="url(#c)">
+    <!-- terra / plantas -->
+    <path d="M0 0h120v44c-18 10-34-8-58 4S20 58 0 50z" fill="#9CC0FF"/>
+    <!-- fauna -->
+    <path d="M0 58c22 6 38-6 62-14s40 2 58-4v30c-22 6-38-6-60 2S20 82 0 76z" fill="#2277FF"/>
+    <!-- água -->
+    <path d="M0 84c22 4 36-8 60-10s40 8 60 2v44H0z" fill="#0056FF"/>
+  </g>
+  <!-- linha de pulso: saúde humana, animal e ambiental -->
+  <path d="M14 66h22l6-12 8 24 7-16 4 4h45" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

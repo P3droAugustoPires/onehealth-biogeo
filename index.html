@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>One Health BioGeo</title>
+<link rel="icon" href="logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Nunito:wght@700;800&display=swap">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="app.css?v=23">
+<script type="importmap">{"imports": {"three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body class="on-mapa">
+<div id="progress"></div>
+
+<!-- barra única: marca, pesquisa de espécie, filtros, páginas -->
+<header class="topbar">
+  <a class="brand" href="#" id="home" title="One Health BioGeo"><img src="logo.svg" alt=""><span class="brand-name">One Health <b>BioGeo</b></span></a>
+  <div class="combo" id="combo">
+    <div class="pill-search">
+      <i class="ti ti-search" id="kIco" aria-hidden="true"></i>
+      <input id="sp" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="ac" autocomplete="off" spellcheck="false"
+        placeholder="Espécie: nome científico ou popular" aria-label="Pesquisar espécie">
+      <button class="icon-btn" id="spClear" title="Limpar"><i class="ti ti-x"></i></button>
+      <button class="go-btn" id="go" title="Consultar (Enter)"><i class="ti ti-arrow-right"></i></button>
+    </div>
+    <div class="ac" id="ac" hidden>
+      <div class="ac-k"><span>Filtrar por grupo</span><div class="ktiles" id="kChips" role="radiogroup" aria-label="Grupo de seres vivos"></div></div>
+      <div id="acList" role="listbox"></div>
+    </div>
+  </div>
+  <button class="tb-btn" id="sbOpen" aria-expanded="false" aria-controls="sb" title="Onde, quando e refinamentos"><i class="ti ti-adjustments-horizontal"></i><span>Filtros</span><b class="cnt" id="fCount" hidden></b></button>
+  <nav class="tabs" id="tabs" aria-label="Páginas">
+    <button data-v="mapa" class="on"><i class="ti ti-map-2"></i><span>Mapa</span></button>
+    <button data-v="stats"><i class="ti ti-chart-dots"></i><span>Painel</span></button>
+    <button data-v="busca"><i class="ti ti-compass"></i><span>Explorar</span></button>
+    <button data-v="analise"><i class="ti ti-microscope"></i><span>Análise</span></button>
+    <button data-v="proj"><i class="ti ti-folders"></i><span>Projetos</span></button>
+  </nav>
+  <button class="icon-btn" id="saveProj" title="Salvar esta consulta em um projeto"><i class="ti ti-device-floppy"></i></button>
+  <div class="menu-wrap">
+    <button class="icon-btn" id="helpBtn" aria-haspopup="menu" aria-expanded="false" title="Ajuda, tutoriais, link e restaurar"><i class="ti ti-help-circle"></i></button>
+    <div class="menu" id="helpMenu" role="menu" hidden>
+      <button role="menuitem" id="tourHere"><i class="ti ti-school"></i><span><b>Tutorial desta página</b><small>passo a passo, com quadros na tela</small></span></button>
+      <button role="menuitem" id="tourAll"><i class="ti ti-route"></i><span><b>Tour completo</b><small>do mapa aos projetos, todas as páginas</small></span></button>
+      <button role="menuitem" id="share"><i class="ti ti-share"></i><span><b>Copiar link desta consulta</b><small>abre a mesma consulta em outro computador</small></span></button>
+      <a role="menuitem" id="hubLink" href="#" target="_blank" rel="noopener" hidden><i class="ti ti-users-group"></i><span><b>Espaço da equipe</b><small>perfis, projetos compartilhados e feedbacks</small></span></a>
+      <button role="menuitem" id="openMethod"><i class="ti ti-info-circle"></i><span><b>Fontes e metodologia</b><small>de onde vem cada dado</small></span></button>
+      <hr>
+      <button role="menuitem" id="restoreAll"><i class="ti ti-restore"></i><span><b>Restaurar padrão</b><small>volta tudo como na primeira abertura</small></span></button>
+    </div>
+  </div>
+</header>
+
+<!-- gaveta de filtros (abre sobre a página) -->
+<aside id="sb" class="drawer" aria-label="Filtros">
+  <div class="drawer-head"><b><i class="ti ti-adjustments-horizontal"></i> Filtros</b><button class="icon-btn" id="sbClose" title="Fechar"><i class="ti ti-x"></i></button></div>
+  <div class="fchips" id="fchips" aria-label="Filtros ativos"></div>
+  <section class="fsec">
+    <h4><i class="ti ti-map-pin"></i> Onde</h4>
+    <select id="area" aria-label="Área">
+      <option value="br">Brasil</option>
+      <option value="zee">ZEE do Brasil (só OBIS)</option>
+      <option value="lme">Plataforma Sul do Brasil (só OBIS)</option>
+      <option value="world">Mundo todo</option>
+      <option value="view">Área visível do mapa</option>
+    </select>
+  </section>
+  <section class="fsec">
+    <h4><i class="ti ti-calendar"></i> Quando</h4>
+    <div class="years"><input id="y0" type="number" min="1700" max="2100" placeholder="desde" aria-label="Ano inicial"><span>–</span><input id="y1" type="number" min="1700" max="2100" placeholder="até" aria-label="Ano final"></div>
+    <div class="presets" id="yPresets">
+      <button data-y="">Todos</button><button data-y="10">Últimos 10 anos</button><button data-y="2000-">Desde 2000</button><button data-y="-1999">Antes de 2000</button>
+    </div>
+  </section>
+  <section class="fsec">
+    <h4><i class="ti ti-database"></i> Fonte dos registros</h4>
+    <input type="hidden" id="src" value="auto">
+    <div class="seg seg3" role="radiogroup" aria-label="Fonte de dados">
+      <label title="Escolhe sozinha: OBIS para vida marinha (traz dados do oceano), GBIF para o resto"><input type="radio" name="srcR" value="auto" checked><span><i class="ti ti-sparkles"></i> Automática</span></label>
+      <label title="Ocean Biodiversity Information System: organismos marinhos, com dados do oceano em cada registro"><input type="radio" name="srcR" value="obis"><span><i class="ti ti-ripple"></i> OBIS</span></label>
+      <label title="Global Biodiversity Information Facility: todos os reinos"><input type="radio" name="srcR" value="gbif"><span><i class="ti ti-world"></i> GBIF</span></label>
+    </div>
+    <select id="max" aria-label="Quantidade de registros"><option value="3000">até 3.000 registros (rápido)</option><option value="10000" selected>até 10.000 registros</option><option value="25000">até 25.000 (lento no GBIF)</option></select>
+    <p class="hint">No GBIF o padrão é 3.000 (cada página de 300 leva segundos).</p>
+  </section>
+  <section class="fsec">
+    <h4><i class="ti ti-filter"></i> Refinar o que foi carregado <small>instantâneo</small></h4>
+    <div id="refine"><p class="hint">Disponível depois da consulta.</p></div>
+  </section>
+  <button class="btn-reset" id="resetF"><i class="ti ti-filter-off"></i> Limpar todos os filtros</button>
+  <button class="btn-reset" id="restoreF"><i class="ti ti-restore"></i> Restaurar tudo ao padrão</button>
+</aside>
+
+<main>
+  <!-- contexto da consulta: flutua sobre o mapa, vira cabeçalho nas outras páginas -->
+  <div class="ctx" id="ctx">
+    <h1 id="title">One Health BioGeo</h1>
+    <div id="status" class="status">Pesquise uma espécie no topo ou ligue uma camada ambiental à esquerda.</div>
+    <div class="qchips" id="qchips" hidden aria-label="Atalhos de filtro"></div>
+    <button class="btn" id="next" hidden></button>
+  </div>
+
+  <section class="view on" id="v-mapa">
+    <div id="map"></div>
+
+    <!-- menu de camadas à esquerda (estilo zoom.earth) -->
+    <nav class="lrail" id="lrail" aria-label="Camadas">
+      <button data-g="esp"><i class="ti ti-paw"></i><span>Espécies</span></button>
+      <button data-g="tempo"><i class="ti ti-cloud"></i><span>Tempo</span></button>
+      <button data-g="mar"><i class="ti ti-ripple"></i><span>Oceano</span></button>
+      <button data-g="terra"><i class="ti ti-trees"></i><span>Terra</span></button>
+      <button data-g="cidade"><i class="ti ti-building-community"></i><span>Cidades</span></button>
+      <button data-g="gente" title="População, luzes noturnas e fumaça no ar"><i class="ti ti-users"></i><span>Pessoas</span></button>
+      <button data-g="limites"><i class="ti ti-shield-check"></i><span>Limites</span></button>
+      <button data-g="base"><i class="ti ti-stack-2"></i><span>Base</span></button>
+    </nav>
+    <div class="fly" id="fly" hidden>
+      <div class="fly-head"><b id="flyTtl"></b><button class="icon-btn" id="flyClose" title="Fechar"><i class="ti ti-x"></i></button></div>
+      <div class="fly-panel" data-g="esp">
+        <label class="sw"><input type="checkbox" id="lPts" checked><span></span>Pontos de ocorrência</label>
+        <label class="sw"><input type="checkbox" id="lGrid"><span></span>Densidade (todos os registros)</label>
+        <label class="field">Colorir pontos por
+          <select id="colorBy">
+            <option value="year">Ano do registro</option>
+            <option value="sst" data-obis>Temperatura da superfície do mar</option>
+            <option value="sss" data-obis>Salinidade</option>
+            <option value="bathymetry" data-obis>Profundidade do local</option>
+            <option value="shoredistance" data-obis>Distância da costa</option>
+            <option value="flag">Qualidade do registro</option>
+            <option value="uc">Unidade de Conservação</option>
+          </select></label>
+        <p class="hint">Animação dos registros ano a ano: botão <i class="ti ti-player-play"></i> embaixo do mapa.</p>
+      </div>
+      <div class="fly-panel" data-g="tempo"><div class="th-list" data-tg="tempo"></div>
+        <div class="field">Modelo da previsão <div class="seg mini" id="wxModel"></div></div></div>
+      <div class="fly-panel" data-g="mar"><div class="th-list" data-tg="mar"></div></div>
+      <div class="fly-panel" data-g="terra"><div class="th-list" data-tg="terra"></div></div>
+      <div class="fly-panel" data-g="cidade"><div class="th-list" data-tg="cidade"></div><p class="hint">Dados intraurbanos (30 m): use <i class="ti ti-map-search"></i> no canto direito para ir a um município e aproxime.</p></div>
+      <div class="fly-panel" data-g="gente"><div class="th-list" data-tg="gente"></div><p class="hint">Exposição humana (One Health): cruze com as ocorrências da espécie.</p></div>
+      <div class="fly-panel" data-g="limites">
+        <p class="hint">Ficam por cima da camada ambiental; ligue quantos quiser.</p>
+        <label class="sw"><input type="checkbox" class="wms" data-url="INDE:MMA" value="MMA:cnuc_2026_03"><span></span>Unidades de Conservação</label>
+        <label class="sw"><input type="checkbox" class="wms" data-url="MB" value="mapbiomas-brasil:indigenous_territory"><span></span>Terras Indígenas</label>
+        <label class="sw"><input type="checkbox" class="wms" data-url="MB" value="mapbiomas-brasil:quilombo"><span></span>Territórios quilombolas</label>
+        <label class="sw"><input type="checkbox" class="wms" data-url="INDE:ICMBio" value="ICMBio:zcm_2a_atualiz"><span></span>Áreas prioritárias (costa e mar)</label>
+        <label class="sw"><input type="checkbox" class="wms" data-url="INDE:ICMBio" value="ICMBio:pan_icmbio_areas_estrat_052024_a"><span></span>Planos de Ação Nacional (PAN)</label>
+        <label class="sw"><input type="checkbox" class="wms" data-url="MB" value="mapbiomas-brasil:biome"><span></span>Biomas do Brasil (IBGE)</label>
+        <div id="wmsOp"></div>
+      </div>
+      <div class="fly-panel" data-g="base"><div class="basemaps" id="basemaps"></div></div>
+      <div class="fly-op" id="flyOp" hidden><span>Transparência da camada</span><input type="range" id="thOp" min="0.15" max="1" step="0.05" aria-label="Transparência da camada ambiental"></div>
+    </div>
+
+    <!-- ferramentas à direita -->
+    <div class="place" id="placeBox">
+      <button class="icon-btn" id="placeBtn" title="Ir para um município"><i class="ti ti-map-search"></i></button>
+      <input id="place" placeholder="Ir para um município…" autocomplete="off" aria-label="Ir para um município">
+      <div class="place-ac" id="placeAc" hidden></div>
+    </div>
+    <div class="cut-hint" id="cutHint" hidden><i class="ti ti-crop"></i><span>Arraste no mapa para desenhar a área do recorte 3D</span>
+      <button class="btn lime" id="cutView">Usar a área visível</button><button class="icon-btn" id="cutCancel" title="Cancelar (Esc)"><i class="ti ti-x"></i></button></div>
+    <div class="cut-hint" id="boxHint" hidden><i class="ti ti-crop"></i><span>Arraste no mapa a área que o painel deve analisar</span>
+      <button class="btn lime" id="boxView">Usar a área visível</button><button class="icon-btn" id="boxCancel" title="Cancelar (Esc)"><i class="ti ti-x"></i></button></div>
+    <button class="map-btn here" id="searchHere" hidden><i class="ti ti-refresh"></i> Buscar nesta área</button>
+
+    <!-- tocador de tempo embaixo -->
+    <div class="dock" id="dock" hidden>
+      <div class="dock-tabs" id="dockTabs" hidden>
+        <button data-d="th" class="on"><i class="ti ti-stack-2"></i> Camada</button><button data-d="sp"><i class="ti ti-paw"></i> Espécies</button>
+        <label class="sync" id="syncBox" hidden title="Mostra só os registros do ano da camada"><input type="checkbox" id="sync" checked> sincronizar anos</label>
+      </div>
+      <div class="tt" id="tt" hidden>
+        <button class="play" id="ttPlay" title="Animar"><i class="ti ti-player-play-filled"></i></button>
+        <div class="tt-main"><div class="tt-head"><b id="ttLbl"></b><span id="ttSub" class="muted"></span>
+            <button class="cmp-btn" id="ttCmp" hidden title="Comparar dois anos ou dias lado a lado, com uma cortina"><i class="ti ti-columns-2"></i> Comparar</button></div>
+          <input type="range" id="ttRange" min="0" max="0" aria-label="Tempo da camada (lado esquerdo)"><div class="ticks" id="ttTicks"></div>
+          <div class="cmp-row" id="cmpRow" hidden><span class="muted">lado direito</span><input type="range" id="ttRange2" min="0" max="0" aria-label="Tempo do lado direito"><b id="ttLbl2"></b>
+            <button class="icon-btn" id="cmpOff" title="Fechar a comparação"><i class="ti ti-x"></i></button></div></div>
+      </div>
+      <div class="timeline" id="tl" hidden>
+        <button class="play" id="tlPlay" title="Animar os registros ano a ano"><i class="ti ti-player-play-filled"></i></button>
+        <div class="tl-main">
+          <div class="tt-head"><b id="tlLbl">Todos os anos</b><span id="tlCount" class="muted"></span>
+            <select id="tlMode" title="O que mostrar no mapa">
+              <option value="all">Todos os anos</option><option value="cum">Acumulado até o ano</option>
+              <option value="win">Janela de 5 anos</option><option value="year">Somente o ano</option>
+            </select></div>
+          <div class="tl-track"><canvas id="tlSpark"></canvas><input type="range" id="tlYear" aria-label="Ano"></div><div class="ticks" id="tlTicks"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- legenda embaixo à direita -->
+    <div class="legend" id="details"><div id="detailsBody"></div></div>
+  </section>
+  <section class="view" id="v-stats"></section>
+  <section class="view" id="v-busca">
+    <div class="wrap">
+      <div class="xtabs" id="xtabs" role="tablist">
+        <button data-x="lugar" class="on"><i class="ti ti-paw"></i><b>Espécies por grupo</b><small>o que vive na área</small></button>
+        <button data-x="nome"><i class="ti ti-search"></i><b>Buscar por nome</b><small>catálogo do GBIF</small></button>
+        <button data-x="dados"><i class="ti ti-database"></i><b>Dados ambientais</b><small>camadas e catálogo</small></button>
+        <button data-x="clima"><i class="ti ti-temperature-sun"></i><b>Clima dos lugares</b><small>capitais, biomas, UCs</small></button>
+      </div>
+      <div class="xpane on" data-x="lugar">
+        <div class="card xhead">
+          <div><h2>Espécies por grupo</h2><p class="lead">Escolha um grupo e a área: a lista traz as espécies com mais registros no GBIF, com nome popular, categoria na Lista Vermelha e atalhos para o mapa e o painel. O número em cada grupo é o total de registros na área.</p></div>
+          <div class="xopts">
+            <select id="hArea" aria-label="Área"><option value="view">Área visível do mapa</option><option value="br">Brasil</option><option value="world">Mundo</option></select>
+            <label class="sw"><input type="checkbox" id="hThr"><span></span>Só ameaçadas (CR, EN, VU)</label>
+          </div>
+          <div class="ggrid" id="hGrp"></div>
+        </div>
+        <div class="card sl-card">
+          <div class="search-big soft sm"><i class="ti ti-filter"></i><input id="hFind" placeholder="Filtrar a lista: nome científico, popular ou família…" autocomplete="off"></div>
+          <div id="hRes"></div>
+        </div>
+      </div>
+      <div class="xpane" data-x="nome">
+        <div class="card hero">
+          <h2>Buscar por nome</h2>
+          <p class="lead">Nome científico ou popular, em qualquer nível. Resultados do Catálogo da Vida (GBIF), ordenados pelo número de registros.</p>
+          <div class="search-big"><i class="ti ti-search"></i><input id="q" placeholder="Ex.: onça-pintada, Aedes, Rhizophora, morcego…" autocomplete="off"></div>
+          <div class="ktiles dark" id="qKingdoms"></div>
+          <div class="search-opts">
+            <label>Nível <select id="qRank"><option value="SPECIES">Espécie</option><option value="GENUS">Gênero</option><option value="FAMILY">Família</option><option value="">Qualquer</option></select></label>
+            <label class="sw"><input type="checkbox" id="qBR" checked><span></span>Só com registros no Brasil</label>
+          </div>
+        </div>
+        <div id="qRes" class="results"></div>
+      </div>
+      <div class="xpane" data-x="dados">
+        <div class="card"><h2>Camadas ambientais prontas no mapa</h2><p class="lead">Um clique abre a camada no mapa, com legenda e animação no tempo.</p><div id="thCat" class="thcat"></div></div>
+        <div class="card"><h2>Catálogo de dados abertos</h2><p class="lead">Fontes de dados ambientais, biológicos e de saúde para baixar e cruzar com as ocorrências (catálogo da pasta <i>estudos</i>).</p>
+          <div class="search-big soft"><i class="ti ti-search"></i><input id="dq" placeholder="Filtrar: clima, solo, malária, oceano…" autocomplete="off"></div>
+          <div class="cchips" id="dCats"></div>
+          <div id="dRes" class="dres"></div></div>
+      </div>
+      <div class="xpane" data-x="clima">
+        <div class="card xhead">
+          <div><h2>Clima dos lugares</h2><p class="lead">Temperatura, sensação, umidade, vento e chuva agora, nos últimos 30 dias e nos próximos 7, lado a lado. Clique no título de uma coluna para ordenar. Dados do Open-Meteo (melhor modelo disponível para cada ponto).</p></div>
+          <div class="xopts"><select id="clArea" aria-label="Área"><option value="br">Brasil</option><option value="view">Área visível do mapa</option></select></div>
+          <div class="seg cl-type" id="clType" role="tablist"></div>
+        </div>
+        <div class="card" id="clRes"></div>
+      </div>
+    </div>
+  </section>
+  <section class="view" id="v-analise"></section>
+  <section class="view" id="v-proj"></section>
+</main>
+
+<dialog id="method">
+  <form method="dialog"><button class="icon-btn close" title="Fechar"><i class="ti ti-x"></i></button></form>
+  <h2>Fontes e metodologia</h2>
+  <p class="lead">A abordagem <b>One Health</b> (Saúde Única) trata a saúde humana, a animal e a ambiental como um só sistema. Aqui ela aparece ao cruzar onde as espécies ocorrem com o uso da terra, o clima, o oceano, as áreas protegidas e a relevância sanitária dos grupos.</p>
+  <details open><summary>Como usar</summary>
+    <ol>
+      <li><b>Pesquise</b> uma espécie na barra do topo (tecla <kbd>/</kbd>). Os ícones de grupo (animais, plantas, fungos…) filtram as sugestões; sinônimos viram o nome aceito.</li>
+      <li><b>Filtros</b> (botão ao lado da pesquisa): área, período, fonte e refinamentos instantâneos (tipo de registro, meses, Unidades de Conservação, duplicatas, qualidade).</li>
+      <li><b>Camadas</b> (menu à esquerda do mapa): uma camada ambiental por vez (tempo, oceano, terra, cidades, pessoas) e, por cima, limites e territórios. Clique em qualquer ponto para os valores do local e a série no tempo.</li>
+      <li><b>Tempo</b> (embaixo do mapa): anime a camada ou os registros da espécie; em camadas anuais, os dois andam juntos.</li>
+      <li><b>Páginas</b>: Painel (gráficos), Espécie (ficha), Explorar (o que vive aqui, busca, dados ambientais), Perguntas e Exportar.</li>
+    </ol></details>
+  <details><summary>De onde vêm os dados</summary>
+    <ul>
+      <li><b>Ocorrências</b>: OBIS (vida marinha, API do pacote R <i>robis</i>, com temperatura, salinidade e profundidade em cada registro) e GBIF (todos os reinos, nomes populares e Lista Vermelha da IUCN).</li>
+      <li><b>Ecorregiões</b>: terrestres do WWF (Olson et al., 2001) e marinhas MEOW (Spalding et al., 2007), no fluxo do <i>gbif-ecoregions</i>.</li>
+      <li><b>Terra</b>: MapBiomas Coleção 11 (1985–2025, 30 m); Terras Indígenas, quilombos e biomas no GeoServer MapBiomas. UCs: CNUC/MMA; Áreas Prioritárias e PANs: ICMBio (INDE). No mundo: cobertura MODIS IGBP (2001–2024, 500 m), perda de floresta Hansen/UMD (2001–2024, 30 m), NDVI VIIRS mensal e solo SoilGrids 2.0 (carbono orgânico e pH, 250 m).</li>
+      <li><b>Cidades e calor</b>: UrbVerde (IAU/USP).</li>
+      <li><b>Pessoas e exposição</b>: densidade populacional GPW v4 (NASA SEDAC, 2000–2020), luzes noturnas Black Marble (2012, 2016) e aerossóis MODIS (fumaça, poeira, poluição), via NASA GIBS.</li>
+      <li><b>Tempo</b>: previsão horária Open-Meteo (modelos ICON e GFS), radar RainViewer, satélite NASA GIBS (VIIRS cor real, chuva GPM IMERG e temperatura da superfície MODIS).</li>
+      <li><b>Oceano em tempo real</b>: correntes e ondas Open-Meteo Marine (animadas); pH, oxigênio, pCO₂, nitrato, fosfato, clorofila, produção primária, temperatura, salinidade, nível do mar e correntes 1/12° do Copernicus Marine (análise e previsão diárias); temperatura e clorofila por satélite (NASA GIBS); batimetria GEBCO.</li>
+      <li><b>Clima no dia do registro</b>: reanálise ERA5 via Open-Meteo (amostra de 40 registros; para todos, script na Análise › Exportar).</li>
+      <li><b>Catálogo de dados</b>: lista curada da pasta <i>estudos</i> (Awesome Public Datasets + fontes brasileiras).</li>
+    </ul></details>
+  <details><summary>Como os indicadores são calculados</summary>
+    <ul>
+      <li><b>EOO</b>: área do menor polígono convexo com todos os pontos, na esfera. <b>AOO</b>: células de 2 × 2 km ocupadas × 4 km².</li>
+      <li><b>Critério B</b>: EOO e AOO comparados aos limiares da IUCN (CR &lt; 100/10 km², EN &lt; 5.000/500, VU &lt; 20.000/2.000). É uma triagem, sem os subcritérios.</li>
+      <li><b>Curva de acumulação</b>: AOO acumulada ano a ano. Se ainda sobe forte, a distribuição conhecida depende do esforço de coleta.</li>
+      <li><b>Proteção</b>: registros testados contra uma imagem das UCs (~1 km/pixel).</li>
+      <li><b>Cobertura nos locais</b>: histórico MapBiomas de até 30 locais distribuídos entre as coordenadas.</li>
+    </ul></details>
+  <details><summary>Limites</summary>
+    <ul>
+      <li>Ocorrências mostram onde houve amostragem, não só onde a espécie vive.</li>
+      <li>O navegador carrega até 25 mil registros; quando a fonte tem mais, aparece "amostra parcial" e EOO/AOO ficam subestimados. Para tudo, use os scripts exportados.</li>
+      <li>Tempo e correntes do Open-Meteo: grade de 14×14 pontos da área visível, interpolada. Copernicus: modelo global (pH e química a 1/4°, física a 1/12°), não medição.</li>
+      <li>Unidades de Conservação só existem para registros no Brasil.</li>
+      <li>A categoria nacional (SALVE/ICMBio) e os dados de resíduos do IBAMA não são obtidos automaticamente: os dois sites bloqueiam acesso automatizado.</li>
+    </ul></details>
+</dialog>
+<!-- recorte 3D (recorte3d.js) -->
+<section class="r3" id="r3" hidden aria-label="Recorte 3D">
+  <div class="r3-stage" id="r3Stage"></div>
+  <div class="r3-info" id="r3Info"></div>
+  <aside class="r3-panel">
+    <div class="r3-head"><b><i class="ti ti-cube-3d-sphere"></i> Recorte 3D</b><button class="icon-btn" id="r3Close" title="Fechar (Esc)"><i class="ti ti-x"></i></button></div>
+    <p class="hint" id="r3Meta"></p>
+    <div class="field">Superfície <div class="seg mini two" id="r3Fundo"><button data-v="sat">Satélite</button><button data-v="relevo">Relevo colorido</button></div></div>
+    <label class="sw"><input type="checkbox" id="r3Camada"><span></span><em id="r3CamadaLbl"></em></label>
+    <label class="sw"><input type="checkbox" id="r3Pts"><span></span><em id="r3PtsLbl"></em></label>
+    <label class="sw"><input type="checkbox" id="r3Mar"><span></span><em>Mar plano (dados na superfície)</em></label>
+    <label class="sw"><input type="checkbox" id="r3Agua"><span></span><em>Lâmina d'água sobre o fundo do mar</em></label>
+    <label class="field">Exagero vertical <b id="r3ExagV"></b><input type="range" id="r3Exag" min="1" max="60" step="1"></label>
+    <div class="field">Câmera <div class="seg mini two" id="r3Cam"><button data-v="p">Perspectiva</button><button data-v="iso">Isométrica</button></div></div>
+    <div class="legend r3-leg" id="r3Leg"></div>
+    <div class="r3-acts">
+      <button class="btn" id="r3Stl"><i class="ti ti-printer"></i> STL para impressão 3D</button>
+      <button class="btn soft" id="r3Glb"><i class="ti ti-box"></i> GLB (Blender)</button>
+      <button class="btn soft" id="r3Png"><i class="ti ti-photo"></i> Imagem</button>
+      <button class="btn soft" id="r3New"><i class="ti ti-crop"></i> Novo recorte</button>
+    </div>
+    <p class="hint">Arraste para girar, roda para aproximar, botão direito para mover. O STL sai com 200 mm no lado maior.
+      Relevo e fundo do mar: AWS Terrain Tiles (SRTM, GEBCO, ETOPO1); satélite: Esri.</p>
+  </aside>
+</section>
+<!-- tutorial: destaque + quadro (tutorial.js) -->
+<div class="tour" id="tour" hidden><div class="tour-spot" id="tourSpot"></div><div class="tour-card" id="tourCard" role="dialog" aria-live="polite"></div></div>
+<div id="toast"></div>
+<script src="grupos.js?v=1"></script>
+<script src="app.js?v=26"></script>
+<script src="analise.js?v=6"></script>
+<script src="onehealth.js?v=3"></script>
+<script src="clima.js?v=2"></script>
+<script src="recorte3d.js?v=3"></script>
+<script src="projetos.js?v=3"></script>
+<script src="tutorial.js?v=8"></script>
+</body>
+</html>
