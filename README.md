@@ -62,7 +62,7 @@ O menu ? → "Copiar link desta consulta" gera um link `#proj=…` com a consult
 
 ## Equipe: compartilhar com outras pessoas
 São duas peças:
-- **Plataforma** (esta pasta): um site estático. Para quem está em outro computador, ela precisa estar num endereço público (GitHub Pages, Netlify ou outro host de arquivos estáticos). Não precisa de conta nem de servidor próprio: as consultas vão direto do navegador para GBIF, OBIS, Open-Meteo etc.
+- **Plataforma** (esta pasta): um site estático, publicado em https://p3droaugustopires.github.io/onehealth-biogeo/ (GitHub Pages do repositório `P3droAugustoPires/onehealth-biogeo`). Não precisa de conta nem de servidor próprio: as consultas vão direto do navegador para GBIF, OBIS, Open-Meteo etc. Depois de editar, rode `python publicar.py "o que mudou"` nesta pasta: ele copia só os arquivos do site para `C:\Users\joise\onehealth-biogeo-site` (repositório fora do OneDrive, sem `vendor/`) e envia ao GitHub; o site atualiza em cerca de um minuto.
 - **Espaço da equipe** (`equipe/hub.html`, publicado no Claude em https://claude.ai/artifact/WKdATxfAczGddNETdcef9n): perfil com foto, nome completo e e-mail; projetos compartilhados; feedbacks com apoio, situação e resposta; aba Equipe. Os dados ficam no banco do artifact. A plataforma não roda dentro do Claude porque o artifact bloqueia acesso às APIs e aos mapas.
 
 Como eles se ligam: na plataforma, aba Projetos → **Compartilhar** copia o link `#proj=…`. No Espaço, em Projetos, cole o link e dê um tema e uma anotação. Os colegas clicam em **Abrir na plataforma** e a consulta abre igual. Ela também é guardada na pasta "Recebidos da equipe".
@@ -84,6 +84,7 @@ Regras do banco: cada pessoa grava só o próprio perfil, os próprios projetos,
 - `data/catalogo.json`: 229 bases de dados (com link) vindas de `ProjetosClaude/estudos/data/datasets*.json`, só as verificadas
 - `grupos.js`: 43 ícones de silhueta próprios (SVG 24×24, cor herdada), os grupos da listagem com as chaves do GBIF e `grpIc()`, que escolhe o ícone pela classificação
 - `clima.js`: Explorar › Clima dos lugares
+- `publicar.py`: publica o site no GitHub Pages
 - `equipe/hub.html`: o Espaço da equipe (artifact do Claude, com banco de dados). Para mudar, edite e publique de novo no mesmo endereço
 - Ícones de interface: Tabler Icons (webfont via jsdelivr); a pasta `icons/` e `ICONES-PROMPTS.md` não são mais usadas
 - `vendor/`: repositórios de referência (robis, obistools, IUCNN, MapBiomas, gbif-ecoregions)
