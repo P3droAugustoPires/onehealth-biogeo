@@ -1600,7 +1600,8 @@ Chart.defaults.font.family = 'Inter, system-ui, sans-serif';
 Chart.defaults.plugins.legend.labels.boxWidth = 10; Chart.defaults.plugins.legend.labels.usePointStyle = true;
 Chart.defaults.plugins.tooltip.backgroundColor = '#04123f'; Chart.defaults.plugins.tooltip.cornerRadius = 10; Chart.defaults.plugins.tooltip.padding = 10;
 Chart.defaults.elements.bar.borderRadius = 6; Chart.defaults.elements.line.tension = .4;
-const CAT = ['#0056ff', '#2277ff', '#5c9bff', '#2db87a', '#04123f', '#9cc0ff', '#f2b134', '#8e24aa'];
+const CAT = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'];
+const catBar = (keys, sel) => keys.map((k, i) => { const c = i < CAT.length ? CAT[i] : '#9aa3b5'; return sel && k !== sel ? c + '45' : c; }); // ponytail: do 9º em diante cinza, sem gerar matiz
 const grad = (top, bottom = 'rgba(0,150,136,0)') => c => { const a = c.chart.chartArea; if (!a) return top; const g = c.chart.ctx.createLinearGradient(0, a.top, 0, a.bottom); g.addColorStop(0, top); g.addColorStop(1, bottom); return g; };
 const noLegend = {plugins: {legend: {display: false}}, scales: {x: {grid: {display: false}}}};
 const emptyView = (ic, t) => `<div class="wrap"><div class="card empty">${ti(ic)}${t}</div></div>`;
@@ -1749,17 +1750,17 @@ function renderStats(el, s) {
   const y0 = yrs[0], years = yrs.length ? Array.from({length: yrs[yrs.length - 1] - y0 + 1}, (_, i) => y0 + i) : [];
   chart('cYear', {data: {labels: years, datasets: [
     {type: 'bar', label: 'registros', data: years.map(y => s.byYear[y] || 0), yAxisID: 'y', order: 2,
-      backgroundColor: F.yr ? years.map(y => y >= F.yr[0] && y <= F.yr[1] ? '#0056ff' : 'rgba(34,119,255,.22)') : grad('#2277ff', 'rgba(34,119,255,.25)')},
-    {type: 'line', label: 'AOO acumulada (km²)', data: s.cum, borderColor: '#5c9bff', backgroundColor: grad('rgba(92,155,255,.35)', 'rgba(92,155,255,0)'), fill: true, pointRadius: 0, borderWidth: 2.5, yAxisID: 'y2', order: 1}]},
+      backgroundColor: F.yr ? years.map(y => y >= F.yr[0] && y <= F.yr[1] ? CAT[0] : CAT[0] + '40') : CAT[0]},
+    {type: 'line', label: 'AOO acumulada (km²)', data: s.cum, borderColor: CAT[1], backgroundColor: grad('rgba(235,104,52,.22)', 'rgba(235,104,52,0)'), fill: true, pointRadius: 0, borderWidth: 2.5, yAxisID: 'y2', order: 1}]},
     options: {interaction: {mode: 'index', intersect: false}, scales: {x: {grid: {display: false}, ticks: {maxTicksLimit: 12}}, y: {title: {display: true, text: 'registros'}},
       y2: {position: 'right', grid: {display: false}, title: {display: true, text: 'AOO km²'}}}}}, years);
   const M = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
-  chart('cMonth', {type: 'radar', data: {labels: M, datasets: [{data: M.map((_, i) => s.byMonth[i + 1] || 0), borderColor: '#0056ff', backgroundColor: 'rgba(34,119,255,.28)',
-      pointBackgroundColor: M.map((_, i) => F.mon.has(i + 1) ? '#04123f' : '#5c9bff'), pointRadius: M.map((_, i) => F.mon.has(i + 1) ? 7 : 4), pointHoverRadius: 8}]},
+  chart('cMonth', {type: 'radar', data: {labels: M, datasets: [{data: M.map((_, i) => s.byMonth[i + 1] || 0), borderColor: CAT[6], backgroundColor: 'rgba(98,80,214,.2)',
+      pointBackgroundColor: M.map((_, i) => F.mon.has(i + 1) ? '#04123f' : CAT[6]), pointRadius: M.map((_, i) => F.mon.has(i + 1) ? 7 : 4), pointHoverRadius: 8}]},
     options: {interaction: {mode: 'nearest', intersect: false}, plugins: {legend: {display: false}}, scales: {r: {ticks: {display: false}, grid: {color: 'rgba(4,18,63,.1)'}, angleLines: {color: 'rgba(4,18,63,.1)'}}}}}, M.map((_, i) => i + 1));
-  if (S.ecoDone && ecoTop.length) chart('cEco', {type: 'bar', data: {labels: ecoTop.map(([k]) => k.length > 34 ? k.slice(0, 32) + '…' : k), datasets: [{data: ecoTop.map(([, n]) => n), backgroundColor: F.eco ? ecoTop.map(([k]) => k === F.eco ? '#04123f' : 'rgba(0,86,255,.28)') : grad('#0056ff', '#2277ff')}]}, options: {...noLegend, indexAxis: 'y'}}, ecoTop.map(([k]) => k));
+  if (S.ecoDone && ecoTop.length) chart('cEco', {type: 'bar', data: {labels: ecoTop.map(([k]) => k.length > 34 ? k.slice(0, 32) + '…' : k), datasets: [{data: ecoTop.map(([, n]) => n), backgroundColor: catBar(ecoTop.map(([k]) => k), F.eco)}]}, options: {...noLegend, indexAxis: 'y'}}, ecoTop.map(([k]) => k));
   if (S.ecoDone && (biomes.length || prov.length)) {
-    const src2 = !useProv ? biomes.map(([k, n]) => [BIOMES[k]?.[0] || k, n, BIOMES[k]?.[1]]) : prov.map(([k, n], i) => [k, n, CAT[i % CAT.length]]);
+    const src2 = !useProv ? biomes.map(([k, n], i) => [BIOMES[k]?.[0] || k, n, CAT[i % CAT.length]]) : prov.map(([k, n], i) => [k, n, CAT[i % CAT.length]]);
     chart('cBiome', {type: 'doughnut', data: {labels: src2.map(x => x[0]), datasets: [{data: src2.map(x => x[1]), backgroundColor: src2.map(x => x[2]), borderColor: '#ffffff', borderWidth: 3}]},
       options: {cutout: '62%', plugins: {legend: {position: 'right'}}}});
   }
@@ -1770,14 +1771,14 @@ function renderStats(el, s) {
   if (s.uc?.n) chart('cUC', {type: 'doughnut', data: {labels: ['Proteção Integral', 'Uso Sustentável', 'Fora de UC'], datasets: [{data: [s.uc.pi, s.uc.us, s.uc.n - s.uc.pi - s.uc.us], backgroundColor: [UCCOL[2], UCCOL[1], UCCOL[0]].map((c, i) => !['pi', 'us', 'out'].includes(F.uc) || ['pi', 'us', 'out'][i] === F.uc ? c : c + '40'), borderColor: '#ffffff', borderWidth: 3}]},
     options: {cutout: '62%', plugins: {legend: {position: 'right'}}}}, ['pi', 'us', 'out']);
   const lb = countBy(s.recs, r => Math.floor(r.lat)), lk = Object.keys(lb).map(Number).sort((a, b) => b - a);
-  chart('cLat', {type: 'bar', data: {labels: lk.map(l => `${Math.abs(l)}°${l < 0 ? 'S' : 'N'}`), datasets: [{data: lk.map(l => lb[l]), backgroundColor: '#5c9bff'}]}, options: {...noLegend, indexAxis: 'y'}});
+  chart('cLat', {type: 'bar', data: {labels: lk.map(l => `${Math.abs(l)}°${l < 0 ? 'S' : 'N'}`), datasets: [{data: lk.map(l => lb[l]), backgroundColor: CAT[2]}]}, options: {...noLegend, indexAxis: 'y'}});
   const bs = sortDesc(s.basis);
   chart('cBasis', {type: 'doughnut', data: {labels: bs.map(([k]) => basisPt(k)), datasets: [{data: bs.map(([, n]) => n), backgroundColor: bs.map(([k], i) => !F.basis.size || F.basis.has(k) ? CAT[i % CAT.length] : CAT[i % CAT.length] + '40'), borderColor: '#ffffff', borderWidth: 3}]}, options: {cutout: '62%', plugins: {legend: {position: 'bottom'}}}}, bs.map(([k]) => k));
-  chart('cDs', {type: 'bar', data: {labels: top.map(([k]) => k.length > 28 ? k.slice(0, 26) + '…' : k), datasets: [{data: top.map(([, n]) => n), backgroundColor: top.map(([k]) => !F.ds || k === F.ds ? '#0056ff' : 'rgba(0,86,255,.28)')}]}, options: {...noLegend, indexAxis: 'y'}}, top.map(([k]) => k));
+  chart('cDs', {type: 'bar', data: {labels: top.map(([k]) => k.length > 28 ? k.slice(0, 26) + '…' : k), datasets: [{data: top.map(([, n]) => n), backgroundColor: catBar(top.map(([k]) => k), F.ds)}]}, options: {...noLegend, indexAxis: 'y'}}, top.map(([k]) => k));
   el.querySelectorAll('[data-th]').forEach(b => b.onclick = () => { setTheme(b.dataset.th); showView('mapa'); });
   el.querySelectorAll('[data-realm]').forEach(b => b.onclick = () => { F.realm = b.dataset.realm; refineChanged(); });
   window.renderNiche?.(); window.renderOH?.(); // perfil ambiental (analise.js) e interface One Health (onehealth.js)
-  if (sp.length > 1) chart('cSp', {type: 'bar', data: {labels: sp.slice(0, 12).map(([k]) => k), datasets: [{data: sp.slice(0, 12).map(([, n]) => n), backgroundColor: F.sp ? sp.slice(0, 12).map(([k]) => k === F.sp ? '#2db87a' : 'rgba(45,184,122,.28)') : grad('#2db87a', '#5c9bff')}]}, options: {...noLegend, indexAxis: 'y'}}, sp.slice(0, 12).map(([k]) => k));
+  if (sp.length > 1) chart('cSp', {type: 'bar', data: {labels: sp.slice(0, 12).map(([k]) => k), datasets: [{data: sp.slice(0, 12).map(([, n]) => n), backgroundColor: catBar(sp.slice(0, 12).map(([k]) => k), F.sp)}]}, options: {...noLegend, indexAxis: 'y'}}, sp.slice(0, 12).map(([k]) => k));
   if (obis && sea) for (const k of ['sst', 'sss', 'bathymetry', 'shoredistance']) {
     const a = s.env(k).map(v => k === 'shoredistance' ? v / 1000 : v); if (!a.length) continue;
     const lo = quantile(a, .01), hi = quantile(a, .99), nb = 24, w = (hi - lo) / nb || 1, h = Array(nb).fill(0);
@@ -2010,7 +2011,7 @@ function envDraw() {
     const h = sea.hourly;
     chart('cEnvSea', {type: 'line', data: {labels: h.time.map(t => t.slice(8, 10) + '/' + t.slice(5, 7) + ' ' + t.slice(11, 13) + 'h'), datasets: [
       {label: 'ondas (m)', data: h.wave_height, borderColor: '#1f5fbf', backgroundColor: 'rgba(31,95,191,.12)', fill: true, pointRadius: 0, yAxisID: 'y'},
-      {label: 'corrente (km/h)', data: h.ocean_current_velocity, borderColor: '#2277ff', pointRadius: 0, yAxisID: 'y'},
+      {label: 'corrente (km/h)', data: h.ocean_current_velocity, borderColor: CAT[2], pointRadius: 0, yAxisID: 'y'},
       {label: 'temperatura do mar (°C)', data: h.sea_surface_temperature, borderColor: '#f29a38', pointRadius: 0, yAxisID: 'y2'}]},
       options: {interaction: {mode: 'index', intersect: false}, plugins: {title: {display: true, text: 'Mar: 2 dias atrás → 5 dias à frente'}},
         scales: {x: {grid: {display: false}, ticks: {maxTicksLimit: 8}}, y: {beginAtZero: true, title: {display: true, text: 'm · km/h'}}, y2: {position: 'right', grid: {display: false}, title: {display: true, text: '°C'}}}}});

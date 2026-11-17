@@ -165,7 +165,7 @@ window.renderNiche = () => {
     const all = P.concat(B), lo = quantile(all, .02), hi = quantile(all, .98), nb = 14, w = (hi - lo) / nb || 1;
     const h = a => { const c = Array(nb).fill(0); a.forEach(v => { if (v >= lo && v <= hi) c[Math.min(nb - 1, Math.floor((v - lo) / w))]++; }); return c.map(x => 100 * x / (a.length || 1)); };
     chart('nc_' + k, {type: 'bar', data: {labels: Array.from({length: nb}, (_, i) => fmt(lo + (i + .5) * w, k === 't' || k === 's' ? 1 : 0)), datasets: [
-      {label: 'locais da espécie', data: h(P), backgroundColor: '#0056ff', barPercentage: 1, categoryPercentage: .9},
+      {label: 'locais da espécie', data: h(P), backgroundColor: '#1baf7a', barPercentage: 1, categoryPercentage: .9},
       {label: 'região', data: h(B), backgroundColor: 'rgba(79,91,125,.35)', barPercentage: 1, categoryPercentage: .9}]},
       options: {plugins: {legend: {position: 'bottom'}, tooltip: {callbacks: {label: c => `${c.dataset.label}: ${fmt(c.raw, 0)}%`}}}, scales: {x: {grid: {display: false}, ticks: {maxTicksLimit: 5}}, y: {ticks: {callback: v => v + '%'}}}}});
   }
