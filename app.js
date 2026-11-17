@@ -7,7 +7,7 @@ const BACKBONE = 'd7dddbf4-2cf0-4f39-9b2a-bb099caae36c';
 const $ = id => document.getElementById(id), $$ = s => [...document.querySelectorAll(s)];
 const S = {recs: [], total: 0, params: {}, view: 'mapa', charts: {}, taxon: null, info: null, lc: null, air: null, token: 0, fv: 0, recSrc: 'obis'};
 // filtros: reino (sugestões e busca) e refinamentos aplicados no navegador sobre os registros carregados
-const F = {king: '', basis: new Set(), unc: 0, sp: '', drop: true, dedup: true, mon: new Set(), ds: '', uc: '', yr: null, box: null, eco: ''}; // yr [a,b] · box [s,w,n,e] · eco: nome // padrão: sem duplicatas e sem erros graves de coordenada
+const F = {king: '', basis: new Set(), unc: 0, sp: '', drop: true, dedup: true, mon: new Set(), ds: '', uc: '', yr: null, box: null, eco: '', realm: ''}; // yr [a,b] · box [s,w,n,e] · eco: nome // padrão: sem duplicatas e sem erros graves de coordenada
 
 const KINGDOMS = [
   {key: 1, sci: 'Animalia', pt: 'Animais', ic: 'paw', txt: 'Eucariontes multicelulares heterótrofos que obtêm alimento por ingestão. A maioria tem tecidos especializados e se locomove em alguma fase da vida. Vai de esponjas e corais a peixes, aves e mamíferos.'},
@@ -225,8 +225,30 @@ const ecoKey = (kind, p) => kind === 'teow' ? p.ECO_ID : p.ECO_CODE;
 const ecoName = p => p ? p.ECO_NAME || p.ECOREGION : null;
 async function assignEco(recs) {
   const [t, m] = await Promise.all([ecoData('teow'), ecoData('meow')]);
-  for (const r of recs) { r._eco = locate(t, r.lon, r.lat); r._meco = r._eco ? null : locate(m, r.lon, r.lat); }
+  for (const r of recs) {
+    r._eco = locate(t, r.lon, r.lat); r._meco = r._eco ? null : locate(m, r.lon, r.lat);
+    r._realm = r._eco ? 'terra' : r._meco ? 'mar' : r.shoredistance != null ? (r.shoredistance < 0 ? 'terra' : 'mar') : null;
+  }
 }
+// ambiente da espécie: bandeiras do WoRMS (via OBIS) e perfis do GBIF; sem elas, a proporção de registros no mar e em terra
+async function habitat(name, key) {
+  const [o, p] = await Promise.all([getJSON(`${OBIS}/taxon/${encodeURIComponent(name)}`).then(j => j.results?.[0]).catch(() => null),
+    key ? getJSON(`${GBIF}/species/${key}/speciesProfiles?limit=50`).then(j => j.results || []).catch(() => []) : []]);
+  const any = f => p.some(x => x[f] === true), h = {mar: !!(o?.is_marine || o?.is_brackish) || any('marine'), doce: !!o?.is_freshwater || any('freshwater'), terra: !!o?.is_terrestrial || any('terrestrial')};
+  h.src = o && (o.is_marine || o.is_brackish || o.is_freshwater || o.is_terrestrial) ? 'WoRMS' : p.length ? 'GBIF' : '';
+  h.known = h.mar || h.doce || h.terra;
+  return h;
+}
+const REALM = {mar: ['Marinha', 'ripple', '#0a6bd6'], terra: ['Terrestre', 'trees', '#2d9a4a'], doce: ['Água doce', 'droplet', '#1fa3b8'], misto: ['Mar e terra', 'arrows-exchange', '#8a5cd0']};
+function realm() {
+  const n = {mar: 0, terra: 0}; used('realm').forEach(r => r._realm && n[r._realm]++);
+  const h = S.info?.hab, tot = n.mar + n.terra;
+  const kind = h?.known ? (h.mar ? (h.terra || h.doce ? 'misto' : 'mar') : h.doce ? 'doce' : 'terra')
+    : tot ? (n.mar / tot > .8 ? 'mar' : n.terra / tot > .8 ? 'terra' : 'misto') : S.recSrc === 'obis' ? 'mar' : 'terra';
+  return {kind, n, h, by: h?.known ? `pelo habitat no ${h.src}` : tot ? 'pelos locais dos registros' : 'pela fonte dos dados'};
+}
+// perfil ambiental e exposição: mar ou terra; "mar e terra" segue o filtro escolhido ou a maioria dos registros
+window.nicheKind = () => { const R = realm(); return F.realm ? (F.realm === 'mar' ? 'sea' : 'land') : R.kind === 'mar' ? 'sea' : R.kind === 'misto' && R.n.mar > R.n.terra ? 'sea' : 'land'; };
 function ecoStats(kind) { // registros e riqueza por ecorregião, como compute_species_richness.R do gbif-ecoregions
   const out = {}, f = kind === 'teow' ? '_eco' : '_meco';
   for (const r of used()) {
@@ -388,15 +410,42 @@ const THEMES = {
   meow: {g: 'mar', sub: 'Fundo e regiões', ic: 'map-2', s: 'MEOW · ecorregiões', n: 'Ecorregiões marinhas', src: 'MEOW (Spalding et al. 2007)', eco: 'meow'},
   meowR: {g: 'mar', sub: 'Fundo e regiões', ic: 'chart-dots', s: 'riqueza do táxon por ecorregião', n: 'Ecorregiões marinhas com registros do táxon', src: 'MEOW + ocorrências carregadas', eco: 'meow', rich: 1},
 };
-const TH = {cur: '', times: null, i: 0, layer: null, all: new Set(), op: {}, timer: null, model: 'best_match'};
-const loaded = l => new Promise(ok => { l.once('load', ok); setTimeout(ok, 5000); });
+const TH = {cur: '', times: null, i: 0, f: 0, spd: 1, pane: 'tema', layer: null, all: new Set(), cache: new Map(), gen: 0, op: {}, timer: null, raf: 0, model: 'best_match'};
+const ready = l => l._ok ? Promise.resolve() : new Promise(ok => { l.once('load', ok); setTimeout(ok, 6000); });
+// camadas de blocos: cada quadro vira uma camada guardada, criada com opacidade 0; a troca é um cruzamento suave
+// feito pelo CSS (transition em .leaflet-layer). "sl" é o tema principal (TH) ou a sobreposição (OV)
+function tileFrame(sl, k, t) {
+  const key = k + '|' + t, gen = sl.gen;
+  if (!sl.cache.has(key)) sl.cache.set(key, Promise.resolve(THEMES[k].tiles(t)).then(l => {
+    l.options.pane = sl.pane; l.setOpacity(0); l.once('load', () => { l._ok = 1; });
+    if (sl.gen === gen) { l.addTo(map); sl.all.add(l); }
+    return l;
+  }));
+  return sl.cache.get(key);
+}
+async function tileShow(sl, k, t, op) {
+  const gen = sl.gen; sl.want = k + '|' + t;
+  const l = await tileFrame(sl, k, t); if (sl.gen !== gen) return;
+  await ready(l); if (sl.gen !== gen || sl.want !== k + '|' + t) return; // quadro já passou (arrastar o tempo)
+  const old = sl.layer; sl.layer = l; l.setOpacity(op);
+  if (old && old !== l) old.setOpacity(0);
+}
+function tileTrim(sl, keep) { // tira do mapa os quadros fora de uso (depois do esmaecer)
+  clearTimeout(sl.trim);
+  sl.trim = setTimeout(() => { const ks = keep(); sl.cache.forEach((p, key) => p.then(l => { if (l !== sl.layer && !ks.has(key)) { map.removeLayer(l); sl.all.delete(l); sl.cache.delete(key); } })); }, 700);
+}
+function tileClear(sl) {
+  sl.gen++; const old = [...sl.all]; old.forEach(l => l.setOpacity(0)); setTimeout(() => old.forEach(l => map.removeLayer(l)), 550);
+  sl.all.clear(); sl.cache.clear(); sl.layer = null;
+}
 function clearTheme() {
-  TH.all.forEach(l => map.removeLayer(l)); TH.all.clear(); TH.layer = null;
+  tileClear(TH);
   if (ecoLayer) { map.removeLayer(ecoLayer); ecoLayer = null; }
   wxStop();
 }
 async function setTheme(k) {
   thStop(); clearTheme(); TH.cur = k; TH.times = null;
+  if (OV.k && OV.k === k) ovSet('');
   const th = THEMES[k];
   if (th?.times || th?.wx) S.dock = 'th';
   renderThemeLists();
@@ -404,48 +453,60 @@ async function setTheme(k) {
     setBusy(true);
     try {
       TH.times = th.times ? await th.times() : null;
-      TH.i = !TH.times ? 0 : th.cm ? Math.max(0, TH.times.indexOf(today())) : TH.times.length - 1; // previsões abrem em hoje
+      TH.f = TH.i = !TH.times ? 0 : th.cm ? Math.max(0, TH.times.indexOf(today())) : TH.times.length - 1; // previsões abrem em hoje
       if (th.eco) await showEco(th); else if (th.wx) await wxLoad(); else await thShow(TH.i);
       if (th.box && !map.getBounds().intersects(L.latLngBounds([th.box[1], th.box[0]], [th.box[3], th.box[2]]))) toast('Esta camada cobre só o estado de São Paulo.');
     } catch (e) { toast(`${th.n}: indisponível agora (${e.message})`); }
     setBusy(false);
   }
-  renderDetails(); renderDock(); writeHash();
+  ovSync(); renderDetails(); renderDock(); writeHash();
 }
 // camadas anuais (MapBiomas, UrbVerde) levam junto os registros da espécie do mesmo ano
 function syncYear() {
   const th = THEMES[TH.cur]; if (!th?.yr || !$('sync').checked || TL.y0 == null) return;
   if (TL.mode === 'all') { TL.mode = 'win'; $('tlMode').value = 'win'; }
-  tlSet(+TH.times[TH.i]);
+  tlSet(+TH.times[TH.i], true);
 }
+const thKeep = () => { const n = TH.times?.length || 1; return new Set([0, 1, 2].map(d => TH.cur + '|' + TH.times?.[(TH.i + d) % n])); };
 async function thShow(i) {
-  const k = TH.cur, th = THEMES[k]; TH.i = i; ttLabel(); syncYear();
+  const k = TH.cur, th = THEMES[k]; TH.i = i; TH.f = i; ttLabel(); syncYear();
   if (th.wx) return wxDraw();
-  const l = await th.tiles(TH.times?.[i]); if (TH.cur !== k) return;
-  l.options.pane = 'tema'; l.setOpacity(TH.op[k] ?? .85); TH.all.add(l); TH.layer = l; l.addTo(map);
-  await loaded(l);
-  TH.all.forEach(x => { if (x !== TH.layer) { map.removeLayer(x); TH.all.delete(x); } }); // troca sem piscar durante a animação
+  ovSync();
+  await tileShow(TH, k, TH.times?.[i], TH.op[k] ?? .85);
+  tileTrim(TH, thKeep);
 }
 function thOpacity(v) {
   TH.op[TH.cur] = v; const th = THEMES[TH.cur];
-  if (th?.eco) map.getPane('eco').style.opacity = v; else if (th?.wx) map.getPane('clima').style.opacity = v; else TH.all.forEach(l => l.setOpacity(v));
+  if (th?.eco) map.getPane('eco').style.opacity = v; else if (th?.wx) map.getPane('clima').style.opacity = v; else TH.layer?.setOpacity(v);
 }
-function thStop() { clearTimeout(TH.timer); TH.playing = false; $('ttPlay').innerHTML = ti('player-play-filled'); }
+function thStop() { clearTimeout(TH.timer); cancelAnimationFrame(TH.raf); TH.playing = false; $('ttPlay').innerHTML = ti('player-play-filled'); }
 function thPlay() {
   if (TH.playing) return thStop();
-  const k = TH.cur, wx = THEMES[k].wx; TH.playing = true;
+  const k = TH.cur, n = TH.times.length; TH.playing = true;
   $('ttPlay').innerHTML = ti('player-pause-filled');
+  if (THEMES[k].wx) { // tempo contínuo: a grade é misturada entre as horas vizinhas, ~15 quadros por segundo
+    let last = performance.now(), drawn = 0;
+    const loop = now => {
+      if (!TH.playing || TH.cur !== k) return;
+      TH.f = (TH.f + (now - last) / 450 * TH.spd) % n; last = now;
+      if (now - drawn > 66) { drawn = now; TH.i = Math.floor(TH.f); ttLabel(); wxDraw(); }
+      TH.raf = requestAnimationFrame(loop);
+    };
+    TH.raf = requestAnimationFrame(loop); return;
+  }
   const tick = async () => {
     if (!TH.playing || TH.cur !== k) return;
-    const i = (TH.i + 1) % TH.times.length; $('ttRange').value = i; await thShow(i); // espera a camada carregar antes do próximo quadro
-    if (TH.playing) TH.timer = setTimeout(tick, wx ? 350 : 700);
+    const i = (TH.i + 1) % n, t0 = performance.now();
+    await thShow(i); // espera o quadro carregar; os dois seguintes já vão carregando escondidos
+    [1, 2].forEach(d => tileFrame(TH, k, TH.times[(i + d) % n]));
+    if (TH.playing) TH.timer = setTimeout(tick, Math.max(60, 900 / TH.spd - (performance.now() - t0)));
   };
   tick();
 }
 function ttLabel() {
   const th = THEMES[TH.cur]; if (!th) return;
-  $('ttLbl').textContent = th.wx ? wxTimeLbl(TH.i) : th.lbl ? th.lbl(TH.times?.[TH.i]) : '';
-  $('ttSub').textContent = th.n; $('ttRange').value = TH.i; rangeP($('ttRange'));
+  $('ttLbl').textContent = th.wx ? wxTimeLbl(TH.f) : th.lbl ? th.lbl(TH.times?.[TH.i]) : '';
+  $('ttSub').textContent = th.n + (OV.k ? ' + ' + THEMES[OV.k].n : ''); $('ttRange').value = TH.i; rangeP($('ttRange'));
 }
 // preenchimento do trilho até o ponto atual (o CSS lê --p)
 function rangeP(el) { const a = +el.min || 0, b = +el.max || 0; el.style.setProperty('--p', (b > a ? (el.value - a) / (b - a) * 100 : 0) + '%'); }
@@ -455,14 +516,19 @@ function ttTicks() { // 5 marcas: começo, meio e fim do tempo da camada
   $('ttTicks').innerHTML = [...new Set([0, .25, .5, .75, 1].map(f => Math.round(f * (n - 1))))].map(i => `<span>${esc(lb(i))}</span>`).join('');
 }
 let ttT;
-$('ttRange').oninput = () => { thStop(); TH.i = +$('ttRange').value; ttLabel(); clearTimeout(ttT); ttT = setTimeout(() => thShow(TH.i), THEMES[TH.cur]?.wx ? 0 : 250); };
+$('ttRange').oninput = () => { thStop(); TH.f = TH.i = +$('ttRange').value; ttLabel(); clearTimeout(ttT); ttT = setTimeout(() => thShow(TH.i), THEMES[TH.cur]?.wx ? 0 : 120); };
 $('ttPlay').onclick = thPlay;
+const SPDS = [1, 2, 4, .5];
+$$('[data-spd]').forEach(b => b.onclick = () => {
+  TH.spd = SPDS[(SPDS.indexOf(TH.spd) + 1) % SPDS.length];
+  $$('[data-spd]').forEach(x => { x.textContent = String(TH.spd).replace('.', ',') + '×'; });
+  if (TL.timer) { tlStop(); $('tlPlay').click(); }
+});
 
 // ---------- tempo e clima no estilo zoom.earth: grade do Open-Meteo interpolada, horária, com animação ----------
-// ponytail: grade de até 14×14 pontos da área visível (1 requisição); refaz ao mover o mapa. Resolução real dos modelos: 2–25 km
-const WX = {grid: null, key: '', parts: null, raf: 0};
-const wxCanvas = L.DomUtil.create('canvas', 'wx-canvas', map.getPane('clima')), wxPart = L.DomUtil.create('canvas', 'wx-canvas', map.getPane('clima'));
-const hex2rgba = h => [1, 3, 5, 7].map(i => i < h.length ? parseInt(h.substr(i, 2), 16) : 255);
+const WX = {grid: null, cache: {}, keep: false};
+const wxCanvas = L.DomUtil.create('canvas', 'wx-canvas', map.getPane('clima'));
+const RGBA = {}, hex2rgba = h => RGBA[h] ||= [1, 3, 5, 7].map(i => i < h.length ? parseInt(h.substr(i, 2), 16) : 255);
 function scaleRGBA(stops, v) {
   if (v <= stops[0][0]) return hex2rgba(stops[0][1]);
   for (let i = 1; i < stops.length; i++) if (v <= stops[i][0]) {
@@ -472,58 +538,76 @@ function scaleRGBA(stops, v) {
   return hex2rgba(stops[stops.length - 1][1]);
 }
 const wrapLon = x => ((x + 540) % 360) - 180;
-async function wxLoad() {
-  const th = THEMES[TH.cur]; if (!th?.wx) return;
-  const b = map.getBounds().pad(.2), s = Math.max(b.getSouth(), -80), n = Math.min(b.getNorth(), 80), w = b.getWest(), e = Math.min(b.getEast(), w + 359);
-  const nx = 14, ny = Math.max(5, Math.min(14, Math.round(14 * (n - s) / (e - w) * 1.3)));
-  const key = [TH.cur, TH.model, s.toFixed(1), n.toFixed(1), w.toFixed(1), e.toFixed(1)].join();
-  if (WX.key === key && WX.grid) return wxDraw();
-  const lats = [], lons = [];
-  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { lats.push((s + (n - s) * j / (ny - 1)).toFixed(2)); lons.push(wrapLon(w + (e - w) * i / (nx - 1)).toFixed(2)); }
-  setBusy(true);
-  try {
+// grade de um tema numa área (1 requisição), guardada: tema principal, sobreposição e 3D usam a mesma
+// ponytail: até nx×nx pontos; o cache cresce a cada área visitada, sem limite (poucos KB por grade)
+function wxFetch(k, b = map.getBounds().pad(.2), nx = 14) {
+  const th = THEMES[k], s = Math.max(b.getSouth(), -80), n = Math.min(b.getNorth(), 80), w = b.getWest(), e = Math.min(b.getEast(), w + 359);
+  const ny = Math.max(5, Math.min(nx, Math.round(nx * (n - s) / (e - w) * 1.3)));
+  const key = [k, th.api ? '' : TH.model, s.toFixed(1), n.toFixed(1), w.toFixed(1), e.toFixed(1), nx].join();
+  return WX.cache[key] ||= (async () => {
+    const lats = [], lons = [];
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) { lats.push((s + (n - s) * j / (ny - 1)).toFixed(2)); lons.push(wrapLon(w + (e - w) * i / (nx - 1)).toFixed(2)); }
     const q = {latitude: lats.join(), longitude: lons.join(), hourly: th.wx.join(), past_days: 1, forecast_days: 3, timezone: 'GMT'};
     const r = await getJSON(th.api === 'marine' ? `https://marine-api.open-meteo.com/v1/marine?${qs(q)}` : `https://api.open-meteo.com/v1/forecast?${qs({...q, models: TH.model})}`);
-    if (!THEMES[TH.cur]?.wx) return;
-    const arr = [].concat(r), times = arr[0].hourly.time.map(t => Date.parse(t + 'Z')), now = Date.now();
-    const get = (v, t) => arr.map(p => p.hourly[v]?.[t] ?? NaN);
-    WX.grid = {s, n, w, e, nx, ny, times, vals: times.map((_, t) => get(th.wx[0], t)), dir: th.wx[1] ? times.map((_, t) => get(th.wx[1], t)) : null};
-    WX.key = key;
-    TH.times = times; TH.i = TH.i && TH.i < times.length && WX.keep ? TH.i : times.findIndex(t => t >= now - 18e5);
-    if (TH.i < 0) TH.i = 0;
-    renderDetails(); renderDock();
-    wxDraw();
+    const arr = [].concat(r), times = arr[0].hourly.time.map(t => Date.parse(t + 'Z'));
+    const get = (v, t) => arr.map(p => p.hourly[v]?.[t] ?? NaN), vals = times.map((_, t) => get(th.wx[0], t)), g = {k, s, n, w, e, nx, ny, times, vals};
+    if (th.wx[1]) { // vento e ondas vêm "de" uma direção; correntes vão "para" (th.to)
+      const sg = th.to ? 1 : -1, rad = Math.PI / 180, dir = times.map((_, t) => get(th.wx[1], t));
+      g.U = vals.map((f, t) => f.map((v, i) => sg * v * Math.sin(dir[t][i] * rad)));
+      g.V = vals.map((f, t) => f.map((v, i) => sg * v * Math.cos(dir[t][i] * rad)));
+    }
+    return g;
+  })().catch(err => { delete WX.cache[key]; throw err; });
+}
+// quadro "fracionário": mistura duas horas vizinhas, para a animação correr sem saltos
+const frameAt = (arr, f) => { const a = Math.min(arr.length - 1, Math.floor(f)), t = f - a, B = arr[a + 1]; return !t || !B ? arr[a] : arr[a].map((v, i) => v + (B[i] - v) * t); };
+async function wxLoad() {
+  const k = TH.cur; if (!THEMES[k]?.wx) return;
+  setBusy(true);
+  try {
+    const g = await wxFetch(k); if (TH.cur !== k) return;
+    WX.grid = g; TH.times = g.times;
+    if (!WX.keep || !TH.i || TH.i >= g.times.length) TH.f = TH.i = Math.max(0, g.times.findIndex(t => t >= Date.now() - 18e5));
+    renderDetails(); renderDock(); wxDraw();
   } catch (err) { toast('Open-Meteo indisponível: ' + err.message); }
   finally { setBusy(false); }
 }
-const wxTimeLbl = i => {
-  const t = TH.times?.[i]; if (!t) return '';
+const wxTime = f => { const a = Math.floor(f), t = TH.times?.[a]; return t == null ? null : t + (f - a) * ((TH.times[a + 1] ?? t) - t); };
+const wxTimeLbl = f => {
+  const t = wxTime(f); if (t == null) return '';
   const d = new Date(t), now = Math.abs(t - Date.now()) < 36e5;
   return d.toLocaleDateString('pt-BR', {weekday: 'short', day: '2-digit', month: '2-digit'}) + ' · ' + d.toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'}) + (now ? ' · agora' : t > Date.now() ? ' · previsão' : '');
 };
-function wxSample(field, lat, lon) { // interpolação bilinear na grade regular
-  const g = WX.grid, fx = (lon - g.w) / (g.e - g.w) * (g.nx - 1), fy = (lat - g.s) / (g.n - g.s) * (g.ny - 1);
+function wxSample(field, lat, lon, g = WX.grid) { // interpolação bilinear na grade regular
+  const fx = (lon - g.w) / (g.e - g.w) * (g.nx - 1), fy = (lat - g.s) / (g.n - g.s) * (g.ny - 1);
   if (fx < 0 || fy < 0 || fx > g.nx - 1 || fy > g.ny - 1) return NaN;
-  const i = Math.min(g.nx - 2, Math.floor(fx)), j = Math.min(g.ny - 2, Math.floor(fy)), a = fx - i, b = fy - j, at = (x, y) => field[y * g.nx + x];
-  return at(i, j) * (1 - a) * (1 - b) + at(i + 1, j) * a * (1 - b) + at(i, j + 1) * (1 - a) * b + at(i + 1, j + 1) * a * b;
+  const i = Math.min(g.nx - 2, Math.floor(fx)), j = Math.min(g.ny - 2, Math.floor(fy)), a = fx - i, b = fy - j, o = j * g.nx + i;
+  return field[o] * (1 - a) * (1 - b) + field[o + 1] * a * (1 - b) + field[o + g.nx] * (1 - a) * b + field[o + g.nx + 1] * a * b;
+}
+// tabela de 1024 cores por escala (evita interpolar a paleta em cada pixel)
+function lutOf(stops) {
+  if (stops._lut) return stops._lut;
+  const lo = stops[0][0], hi = stops[stops.length - 1][0], t = new Uint8ClampedArray(4096);
+  for (let i = 0; i < 1024; i++) t.set(scaleRGBA(stops, lo + (hi - lo) * i / 1023).map((c, j) => j === 3 ? c * .82 : c), i * 4);
+  return stops._lut = {t, lo, k: 1023 / (hi - lo || 1)};
 }
 function wxPlace(c) { const sz = map.getSize(); c.width = sz.x; c.height = sz.y; c.style.width = sz.x + 'px'; c.style.height = sz.y + 'px'; L.DomUtil.setPosition(c, map.containerPointToLayerPoint([0, 0])); }
-function wxDraw() {
-  const g = WX.grid, th = THEMES[TH.cur]; if (!g || !th?.wx) return;
-  wxPlace(wxCanvas);
-  if (!wxCanvas.width || !wxCanvas.height) return; // mapa escondido (outra aba)
-  const W = wxCanvas.width, H = wxCanvas.height, st = 4, cw = Math.ceil(W / st), ch = Math.ceil(H / st), img = new ImageData(cw, ch), f = g.vals[TH.i];
+function paintField(c, g, th, f, labels) {
+  wxPlace(c);
+  if (!c.width || !c.height) return; // mapa escondido (outra aba)
+  const W = c.width, H = c.height, st = 4, cw = Math.ceil(W / st), ch = Math.ceil(H / st), img = new ImageData(cw, ch), d = img.data, {t, lo, k} = lutOf(th.stops);
   const west = map.containerPointToLatLng([0, 0]).lng, east = map.containerPointToLatLng([W, 0]).lng;
   for (let py = 0; py < ch; py++) {
     const lat = map.containerPointToLatLng([0, py * st]).lat;
     for (let px = 0; px < cw; px++) {
-      const v = wxSample(f, lat, west + (east - west) * px * st / W); if (isNaN(v)) continue;
-      const c = scaleRGBA(th.stops, v), o = 4 * (py * cw + px);
-      img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = c[3] * .82;
+      const v = wxSample(f, lat, west + (east - west) * px * st / W, g); if (isNaN(v)) continue;
+      const q = Math.max(0, Math.min(1023, (v - lo) * k | 0)) * 4, o = 4 * (py * cw + px);
+      d[o] = t[q]; d[o + 1] = t[q + 1]; d[o + 2] = t[q + 2]; d[o + 3] = t[q + 3];
     }
   }
   const off = document.createElement('canvas'); off.width = cw; off.height = ch; off.getContext('2d').putImageData(img, 0, 0);
-  const ctx = wxCanvas.getContext('2d'); ctx.imageSmoothingEnabled = true; ctx.drawImage(off, 0, 0, W, H);
+  const ctx = c.getContext('2d'); ctx.imageSmoothingEnabled = true; ctx.drawImage(off, 0, 0, W, H);
+  if (!labels) return;
   // rótulos com o valor, como no zoom.earth (um a cada dois pontos da grade)
   ctx.font = '600 11px Inter, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   for (let j = 1; j < g.ny - 1; j += 2) for (let i = 1; i < g.nx - 1; i += 2) {
@@ -533,35 +617,76 @@ function wxDraw() {
     ctx.fillStyle = 'rgba(3,12,46,.74)'; ctx.beginPath(); ctx.roundRect(p.x - tw / 2, p.y - 9, tw, 18, 9); ctx.fill();
     ctx.fillStyle = '#fff'; ctx.fillText(t, p.x, p.y + .5);
   }
-  if (g.dir) wxWind(); else wxPartStop();
 }
-// partículas animadas: vento e ondas usam a direção de onde vêm; correntes, a direção para onde vão (th.to)
-function wxWind() {
-  wxPartStop(); wxPlace(wxPart);
-  const g = WX.grid, sp = g.vals[TH.i], dr = g.dir[TH.i], ctx = wxPart.getContext('2d'), W = wxPart.width, H = wxPart.height;
-  const th = THEMES[TH.cur], sg = th.to ? 1 : -1, f = .06 * (th.pf || 1);
-  const U = sp.map((v, k) => sg * v * Math.sin(dr[k] * Math.PI / 180)), V = sp.map((v, k) => sg * v * Math.cos(dr[k] * Math.PI / 180));
+function wxDraw() {
+  const g = WX.grid, th = THEMES[TH.cur]; if (!g || !th?.wx) return;
+  paintField(wxCanvas, g, th, frameAt(g.vals, TH.f), true);
+  if (g.U) flowSet(FL.main, g, frameAt(g.U, TH.f), frameAt(g.V, TH.f), th); else flowStop(FL.main);
+  ovSync();
+}
+// partículas: cada sistema guarda as suas; mudar a hora só troca o campo (U, V), sem recomeçar o desenho
+const mkFlow = p => ({cv: L.DomUtil.create('canvas', 'wx-canvas', map.getPane(p)), raf: 0});
+const FL = {main: mkFlow('clima')};
+function flowSet(fl, g, U, V, th, col = 'rgba(255,255,255,.85)') {
+  Object.assign(fl, {g, U, V, col, sp: .06 * (th.pf || 1)});
+  if (fl.raf) return;
+  wxPlace(fl.cv); const W = fl.cv.width, H = fl.cv.height, ctx = fl.cv.getContext('2d'); if (!W || !H) return;
   const P = Array.from({length: Math.round(W * H / 900)}, () => ({x: Math.random() * W, y: Math.random() * H, a: Math.random() * 80}));
   const step = () => {
     ctx.globalCompositeOperation = 'destination-in'; ctx.fillStyle = 'rgba(0,0,0,.9)'; ctx.fillRect(0, 0, W, H);
-    ctx.globalCompositeOperation = 'source-over'; ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = 1.2; ctx.beginPath();
+    ctx.globalCompositeOperation = 'source-over'; ctx.strokeStyle = fl.col; ctx.lineWidth = 1.2; ctx.beginPath();
     for (const p of P) {
-      const ll = map.containerPointToLatLng([p.x, p.y]), u = wxSample(U, ll.lat, ll.lng), v = wxSample(V, ll.lat, ll.lng);
+      const ll = map.containerPointToLatLng([p.x, p.y]), u = wxSample(fl.U, ll.lat, ll.lng, fl.g), v = wxSample(fl.V, ll.lat, ll.lng, fl.g);
       if (isNaN(u) || p.a-- < 0) { Object.assign(p, {x: Math.random() * W, y: Math.random() * H, a: 40 + Math.random() * 60}); continue; }
-      const nx = p.x + u * f, ny = p.y - v * f;
+      const nx = p.x + u * fl.sp, ny = p.y - v * fl.sp;
       ctx.moveTo(p.x, p.y); ctx.lineTo(nx, ny); p.x = nx; p.y = ny;
       if (nx < 0 || ny < 0 || nx > W || ny > H) p.a = -1;
     }
-    ctx.stroke(); WX.raf = requestAnimationFrame(step);
+    ctx.stroke(); fl.raf = requestAnimationFrame(step);
   };
-  WX.raf = requestAnimationFrame(step);
+  fl.raf = requestAnimationFrame(step);
 }
-function wxPartStop() { cancelAnimationFrame(WX.raf); wxPart.getContext('2d').clearRect(0, 0, wxPart.width, wxPart.height); }
-function wxStop() { wxPartStop(); WX.grid = null; WX.key = ''; WX.keep = false; wxCanvas.getContext('2d').clearRect(0, 0, wxCanvas.width, wxCanvas.height); }
+function flowStop(fl) { cancelAnimationFrame(fl.raf); fl.raf = 0; fl.cv.getContext('2d').clearRect(0, 0, fl.cv.width, fl.cv.height); }
+function wxStop() { flowStop(FL.main); WX.grid = null; WX.keep = false; wxCanvas.getContext('2d').clearRect(0, 0, wxCanvas.width, wxCanvas.height); }
+
+// ---------- sobreposição: uma segunda camada por cima do tema (blocos com transparência, ou só as partículas de vento, correntes e ondas) ----------
+pane('tema2', 255, false); pane('clima2', 275, false);
+const OV = {k: '', pane: 'tema2', layer: null, all: new Set(), cache: new Map(), gen: 0, op: {}, grid: null, flow: false, times: null};
+FL.ov = mkFlow('clima2');
+const canOv = th => !!(th.tiles || th.wx?.[1]);
+// tempo em ms de qualquer formato de "times" (ano, data, quadro do radar, hora do Open-Meteo)
+const tms = x => x == null ? Date.now() : typeof x === 'number' ? (x > 1e11 ? x : Date.UTC(x, 6, 1)) : String(x).includes('|') ? +x.split('|')[0] * 1e3 : Date.parse(x.length === 4 ? x + '-07-01' : x) || Date.now();
+const mainT = () => THEMES[TH.cur]?.wx ? wxTime(TH.f) ?? Date.now() : TH.times ? tms(TH.times[TH.i]) : Date.now();
+const nearI = (ts, t) => ts.reduce((b, x, i) => Math.abs(tms(x) - t) < Math.abs(tms(ts[b]) - t) ? i : b, 0);
+function ovSync() { // a sobreposição acompanha o tempo do tema principal (o quadro mais próximo)
+  const th = THEMES[OV.k]; if (!th) return;
+  const t = mainT();
+  if (OV.flow) {
+    const g = OV.grid; if (!g) return;
+    const f = Math.max(0, Math.min(g.times.length - 1, (t - g.times[0]) / ((g.times[1] - g.times[0]) || 36e5)));
+    FL.ov.cv.style.opacity = OV.op[OV.k] ?? 1;
+    return flowSet(FL.ov, g, frameAt(g.U, f), frameAt(g.V, f), th, 'rgba(150,235,255,.95)');
+  }
+  OV.tt = OV.times ? OV.times[nearI(OV.times, t)] : undefined;
+  tileShow(OV, OV.k, OV.tt, OV.op[OV.k] ?? .7).then(() => tileTrim(OV, () => new Set([OV.k + '|' + OV.tt])));
+}
+async function ovLoadFlow() { const k = OV.k, g = await wxFetch(k); if (OV.k === k) { OV.grid = g; flowStop(FL.ov); ovSync(); } }
+async function ovSet(k) {
+  tileClear(OV); flowStop(FL.ov); Object.assign(OV, {k: '', grid: null, flow: false, times: null, tt: undefined});
+  const th = THEMES[k];
+  if (th && k !== TH.cur && canOv(th)) {
+    OV.k = k; OV.flow = !th.tiles;
+    try {
+      if (OV.flow) await ovLoadFlow(); else { OV.times = th.times ? await th.times() : null; ovSync(); }
+    } catch (e) { toast(`${th.n}: indisponível agora (${e.message})`); OV.k = ''; }
+  }
+  renderThemeLists(); renderDetails(); ttLabel(); writeHash();
+}
 let wxT;
-map.on('movestart', () => { if (THEMES[TH.cur]?.wx) { wxPartStop(); wxCanvas.style.visibility = 'hidden'; } });
+map.on('movestart', () => { flowStop(FL.main); flowStop(FL.ov); if (THEMES[TH.cur]?.wx) wxCanvas.style.visibility = 'hidden'; });
 map.on('moveend', () => {
-  if (!THEMES[TH.cur]?.wx) return;
+  if (OV.flow) { clearTimeout(OV.mt); OV.mt = setTimeout(() => ovLoadFlow().catch(() => {}), 500); }
+  if (!THEMES[TH.cur]?.wx) return ovSync();
   wxCanvas.style.visibility = ''; wxDraw();
   clearTimeout(wxT); WX.keep = true; wxT = setTimeout(wxLoad, 500); // recarrega a grade para a nova área
 });
@@ -731,7 +856,7 @@ const normO = r => ({id: r.id, lon: r.decimalLongitude, lat: r.decimalLatitude, 
   sci: r.species || r.scientificName, kingdom: r.kingdom, phylum: r.phylum, class: r.class, order: r.order, family: r.family, dataset: r.datasetName || r.dataset_id,
   url: `https://obis.org/dataset/${r.dataset_id}`, flags: r.flags || [], sst: r.sst, sss: r.sss, bathymetry: r.bathymetry, shoredistance: r.shoredistance,
   unc: r.coordinateUncertaintyInMeters, basis: r.basisOfRecord, category: r.category, depth: r.depth});
-const normG = r => ({id: r.key, lon: r.decimalLongitude, lat: r.decimalLatitude, year: r.year, month: r.month, date: r.eventDate, sci: r.species || r.scientificName,
+const normG = r => ({id: r.key, lon: r.decimalLongitude, lat: r.decimalLatitude, year: r.year, month: r.month, date: r.eventDate, sci: r.species || r.scientificName, sk: r.speciesKey,
   kingdom: r.kingdom, phylum: r.phylum, class: r.class, order: r.order, family: r.family, dataset: r.datasetName || r.datasetKey,
   url: `https://www.gbif.org/occurrence/${r.key}`, flags: r.issues || [], cc: r.countryCode, unc: r.coordinateUncertaintyInMeters, basis: r.basisOfRecord, category: r.iucnRedListCategory, depth: r.depth});
 const OBIS_SERIOUS = new Set(['ZERO_COORD', 'NO_MATCH', 'ON_LAND']); // como check_onland do obistools; alertas só de profundidade não descartam o registro
@@ -747,7 +872,7 @@ function used(x = '') {
   const r = S.recs.filter(r => (!F.drop || !serious(r)) && (!F.basis.size || x === 'basis' || F.basis.has(r.basis)) && (!F.mon.size || x === 'mon' || F.mon.has(r.month))
     && (!F.ds || x === 'ds' || r.dataset === F.ds) && ucOK(r) && (!F.unc || r.unc == null || r.unc <= F.unc) && (!F.sp || x === 'sp' || r.sci === F.sp)
     && (!F.yr || x === 'yr' || (r.year >= F.yr[0] && r.year <= F.yr[1])) && (!b || (r.lat >= b[0] && r.lat <= b[2] && r.lon >= b[1] && r.lon <= b[3]))
-    && (!F.eco || x === 'eco' || ecoName(r._eco || r._meco) === F.eco) && (!F.dedup || (k => !seen.has(k) && seen.add(k))(dupKey(r))));
+    && (!F.eco || x === 'eco' || ecoName(r._eco || r._meco) === F.eco) && (!F.realm || x === 'realm' || r._realm === F.realm) && (!F.dedup || (k => !seen.has(k) && seen.add(k))(dupKey(r))));
   usedMemo[x] = {v: S.fv, r};
   return r;
 }
@@ -837,7 +962,7 @@ async function run() {
     $('sp').value = t.name;
     if (S.taxon?.name !== t.name && !S.keepF) { F.basis.clear(); F.sp = ''; F.ds = ''; } // projeto aberto: mantém os refinamentos salvos
     if (F.king && t.kingdom && KINGDOMS.find(k => String(k.key) === F.king)?.sci !== t.kingdom) { F.king = ''; renderKChips(); }
-    S.taxon = t; S.info = null; S.lc = null; S.air = null; S.ecoDone = false; closeAc(); remember(t);
+    S.taxon = t; S.info = null; F.realm = ''; S.lc = null; S.air = null; S.ecoDone = false; closeAc(); remember(t);
     // troca já: título da nova espécie e mapa sem os pontos da anterior; os pontos do GBIF entram página a página
     $('title').innerHTML = `Ocorrências de <i>${esc(t.name)}</i> ${AREAS[$('area').value].label}`;
     S.recs = []; S.fv++; tlInit(); renderPts(); writeHash();
@@ -1051,6 +1176,7 @@ function fList() {
   if (F.yr) c.push({ic: 'calendar-stats', cl: 1, t: F.yr[0] === F.yr[1] ? `ano ${F.yr[0]}` : `anos ${F.yr[0]}–${F.yr[1]}`, x: () => { F.yr = null; refineChanged(); }});
   if (F.box) c.push({ic: 'crop', cl: 1, t: 'área desenhada', x: () => { F.box = null; refineChanged(); }});
   if (F.eco) c.push({ic: 'map-2', cl: 1, t: F.eco.slice(0, 34), x: () => { F.eco = ''; refineChanged(); }});
+  if (F.realm) c.push({ic: REALM[F.realm][1], cl: 1, t: F.realm === 'mar' ? 'só no mar' : 'só em terra', x: () => { F.realm = ''; refineChanged(); }});
   if (F.ds) c.push({ic: 'stack-2', cl: 1, t: String(F.ds).slice(0, 30), x: () => { F.ds = ''; refineChanged(); }});
   if (F.drop && S.recs.length) c.push({ic: 'shield-check', cl: 1, t: 'sem erros graves', x: () => { F.drop = false; refineChanged(); }});
   if (F.dedup && S.recs.length) c.push({ic: 'layers-intersect', cl: 1, t: 'sem duplicatas', x: () => { F.dedup = false; refineChanged(); }});
@@ -1065,7 +1191,7 @@ function renderFchips() {
   window.renderQchips?.(c); // atalhos e filtros cruzados no topo do mapa e das páginas (analise.js)
 }
 $('resetF').onclick = () => {
-  F.basis.clear(); F.unc = 0; F.sp = ''; F.drop = true; F.dedup = true; F.king = ''; F.mon.clear(); F.ds = ''; F.uc = ''; F.yr = F.box = null; F.eco = ''; renderKChips();
+  F.basis.clear(); F.unc = 0; F.sp = ''; F.drop = true; F.dedup = true; F.king = ''; F.mon.clear(); F.ds = ''; F.uc = ''; F.yr = F.box = null; F.eco = ''; F.realm = ''; renderKChips();
   $('y0').value = $('y1').value = ''; markPreset(); TL.mode = 'all'; $('tlMode').value = 'all';
   const changedArea = $('area').value !== 'br'; $('area').value = 'br';
   changedArea || S.params.startdate || S.params.year ? run() : refineChanged();
@@ -1100,7 +1226,7 @@ function drawSpark() {
     g.fillRect(i * bw + .5, h - bh, Math.max(1, bw - 1), bh);
   }
 }
-function tlSet(year) { TL.year = year; $('tlYear').value = year; rangeP($('tlYear')); tlLabel(); drawSpark(); renderPts(); renderFchips(); }
+function tlSet(year) { TL.year = year; $('tlYear').value = year; rangeP($('tlYear')); tlLabel(); drawSpark(); renderPts(true); renderFchips(); }
 $('tlYear').oninput = () => { if (TL.mode === 'all') { TL.mode = 'cum'; $('tlMode').value = 'cum'; } tlSet(+$('tlYear').value); };
 $('tlMode').onchange = () => { TL.mode = $('tlMode').value; tlSet(TL.year); };
 function tlStop() { clearInterval(TL.timer); TL.timer = null; $('tlPlay').innerHTML = ti('player-play-filled'); }
@@ -1111,7 +1237,7 @@ $('tlPlay').onclick = () => {
   const step = Math.max(1, Math.round((TL.y1 - TL.y0) / 60)); // ~60 quadros no máximo
   $('tlPlay').innerHTML = ti('player-pause-filled');
   tlSet(y);
-  TL.timer = setInterval(() => { y = Math.min(TL.y1, y + step); tlSet(y); if (y >= TL.y1) tlStop(); }, 350);
+  TL.timer = setInterval(() => { y = Math.min(TL.y1, y + step); tlSet(y); if (y >= TL.y1) tlStop(); }, 450 / TH.spd);
 };
 addEventListener('resize', () => requestAnimationFrame(drawSpark));
 
@@ -1129,27 +1255,41 @@ function rampColor(ramp, t) {
 const UCCOL = ['#e5533d', '#f2b134', '#1e9e5a', '#a3abc4', '#cfd8dc'], UCLBL = ['Fora de UC', 'Uso Sustentável', 'Proteção Integral', 'Calculando…', 'Fora do Brasil (sem dado)'];
 const ucIdx = r => r._uc == null ? 3 : r._uc < 0 ? 4 : r._uc;
 let scale = null;
-function renderPts() {
-  ptsLayer.clearLayers(); scale = null;
-  if ($('lPts').checked) {
-    const v = $('colorBy').value, recs = mapRecs();
+// inc (linha do tempo): só tira os pontos que saíram e põe os que entraram, com um "pop" curto; o resto fica parado
+const PT = {on: new Set(), gen: 0};
+function popIn(ms) {
+  if (!ms.length || ms.length > 1500) return;
+  const t0 = performance.now(), f = now => { const k = Math.min(1, (now - t0) / 320); ms.forEach(m => m.setRadius(1 + 3.5 * (1 - (1 - k) ** 3) + 2.5 * Math.sin(k * Math.PI) ** 2)); if (k < 1) requestAnimationFrame(f); };
+  requestAnimationFrame(f);
+}
+function renderPts(inc) {
+  const v = $('colorBy').value;
+  if (inc !== true || (RAMPS[v] && scale?.v !== v)) {
+    ptsLayer.clearLayers(); PT.on = new Set(); PT.gen++; scale = null;
     if (RAMPS[v]) { const vals = used().map(r => r[v]).filter(x => x != null); scale = {v, lo: quantile(vals, .02), hi: quantile(vals, .98)}; }
-    for (const r of recs) {
+  }
+  const show = new Set($('lPts').checked ? mapRecs() : []), born = [];
+  PT.on.forEach(r => { if (!show.has(r)) { ptsLayer.removeLayer(r._mk); PT.on.delete(r); } });
+  for (const r of show) {
+    if (PT.on.has(r)) continue;
+    if (r._mk?._g !== PT.gen) {
       const x = r[v];
       const col = v === 'flag' ? (serious(r) ? '#e5533d' : '#0056ff') : v === 'uc' ? UCCOL[ucIdx(r)]
         : x == null ? '#a3abc4' : rampColor(RAMPS[v], (x - scale.lo) / (scale.hi - scale.lo || 1));
-      L.circleMarker([r.lat, r.lon], {radius: 4.5, weight: .8, color: '#ffffff', fillColor: col, fillOpacity: .92})
-        .bindPopup(() => `<b><i>${esc(r.sci)}</i></b><br>${esc(r.date || r.year || 'sem data')} · ${esc(basisPt(r.basis))}
+      r._mk = L.circleMarker([r.lat, r.lon], {radius: 4.5, weight: .8, color: '#ffffff', fillColor: col, fillOpacity: .92})
+        .bindPopup(() => `<b><i>${esc(r.sci)}</i></b> <button class="lnk" data-ficha data-n="${esc(r.sci)}" data-k="${r.sk || ''}">${ti('id-badge-2')} ficha</button><br>${esc(r.date || r.year || 'sem data')} · ${esc(basisPt(r.basis))}
           ${r._eco || r._meco ? `<br>${ti('map-2')} ${esc(ecoName(r._eco || r._meco))}` : ''}
           ${r.sst != null ? `<br>Mar: ${fmt(r.sst)} °C · salinidade ${fmt(r.sss)} · prof. ${fmt(r.bathymetry, 0)} m` : ''}
           ${r._t2m != null ? `<br>Ar no dia (ERA5): ${fmt(r._t2m)} °C · chuva ${fmt(r._pr)} mm` : ''}
           ${r._uc != null ? `<br>${UCLBL[ucIdx(r)]}` : ''}
           ${r.unc ? `<br>Incerteza da coordenada: ${fmt(r.unc / 1000)} km` : ''}
           ${r.flags.length ? `<br><span class="muted">Alertas: ${r.flags.map(f => esc(FLAG_PT[f] || f)).join('; ')}</span>` : ''}
-          <br><span class="muted">${esc(r.dataset)}</span><br><a target="_blank" rel="noopener" href="${r.url}">abrir registro original ↗</a>`)
-        .addTo(ptsLayer);
+          <br><span class="muted">${esc(r.dataset)}</span><br><a target="_blank" rel="noopener" href="${r.url}">abrir registro original ↗</a>`);
+      r._mk._g = PT.gen;
     }
+    ptsLayer.addLayer(r._mk); PT.on.add(r); if (inc) born.push(r._mk);
   }
+  popIn(born);
   if (TL.y0 != null) $('tlCount').textContent = `${mapRecs().length.toLocaleString('pt-BR')} registros no mapa`;
   renderDetails();
 }
@@ -1170,14 +1310,15 @@ async function loadGrid() {
     onEachFeature: (f, l) => l.bindTooltip(f.properties.n.toLocaleString('pt-BR') + ' registros')}).addTo(gridLayer);
   gridLayer.addTo(map); renderDetails();
 }
-$('lPts').onchange = $('colorBy').onchange = renderPts;
+$('lPts').onchange = $('colorBy').onchange = () => renderPts();
 $('lGrid').onchange = loadGrid;
 
 // ---------- menu de camadas (estilo zoom.earth): grupos à esquerda, lista do grupo ao lado ----------
 const GRP = {esp: 'Espécies', tempo: 'Tempo e clima', mar: 'Oceano', terra: 'Terra e biomas', cidade: 'Cidades e calor · UrbVerde', gente: 'Pessoas e exposição',limites: 'Limites e territórios', base: 'Mapa-base'};
 let flyG = '';
-const thItem = k => { const th = THEMES[k]; return `<button class="th-i ${TH.cur === k ? 'on' : ''}" data-t="${k}" title="${esc(th.src)}"><span class="tx">${ti(th.ic)}</span>
-  <span><b>${esc(th.n)}</b><small>${esc(th.s || th.src)}</small></span>${th.times || th.wx ? ti('player-play') : '<span></span>'}</button>`; };
+const thItem = k => { const th = THEMES[k], ov = OV.k === k; return `<div class="th-row"><button class="th-i ${TH.cur === k ? 'on' : ''}" data-t="${k}" title="${esc(th.src)}"><span class="tx">${ti(th.ic)}</span>
+  <span><b>${esc(th.n)}</b><small>${esc(th.s || th.src)}</small></span>${th.times || th.wx ? ti('player-play') : '<span></span>'}</button>${canOv(th) && TH.cur && TH.cur !== k
+  ? `<button class="th-ov ${ov ? 'on' : ''}" data-ov="${k}" title="${ov ? 'Tirar de cima' : th.tiles ? 'Pôr por cima da camada principal (com transparência)' : 'Pôr as partículas por cima da camada principal'}">${ti('stack-push')}</button>` : ''}</div>`; };
 function themeGroups(g) { // itens do grupo, separados por subgrupo na ordem em que aparecem
   const subs = new Map();
   Object.keys(THEMES).filter(k => THEMES[k].g === g).forEach(k => { const s = THEMES[k].sub || ''; subs.has(s) || subs.set(s, []); subs.get(s).push(k); });
@@ -1189,6 +1330,7 @@ function renderThemeLists() {
     el.innerHTML = themeGroups(g) + (THEMES[TH.cur]?.g === g ? `<button class="th-off" data-t="">${ti('eye-off')} Desligar esta camada</button>` : '');
   });
   $$('.th-list [data-t]').forEach(b => b.onclick = () => setTheme(b.dataset.t === TH.cur ? '' : b.dataset.t));
+  $$('.th-list [data-ov]').forEach(b => b.onclick = () => ovSet(b.dataset.ov === OV.k ? '' : b.dataset.ov));
   renderFly();
 }
 function renderRail() {
@@ -1212,7 +1354,7 @@ $('flyClose').onclick = () => setFly('');
 $('thOp').oninput = () => thOpacity(+$('thOp').value);
 function renderModel() {
   $('wxModel').innerHTML = [['best_match', 'Melhor'], ['icon_seamless', 'ICON'], ['gfs_seamless', 'GFS']].map(([v, n]) => `<button data-m="${v}" class="${TH.model === v ? 'on' : ''}">${n}</button>`).join('');
-  $$('#wxModel [data-m]').forEach(b => b.onclick = () => { TH.model = b.dataset.m; renderModel(); if (THEMES[TH.cur]?.wx && !THEMES[TH.cur].api) { WX.key = ''; WX.keep = true; wxLoad(); } });
+  $$('#wxModel [data-m]').forEach(b => b.onclick = () => { TH.model = b.dataset.m; renderModel(); if (THEMES[TH.cur]?.wx && !THEMES[TH.cur].api) { WX.keep = true; wxLoad(); } });
 }
 const BASE_THUMB = {Oceano: 'https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/3/4/2',
   Satélite: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/3/4/2', Ruas: 'https://tile.openstreetmap.org/3/2/4.png'};
@@ -1245,14 +1387,14 @@ function cmLegend(k, th) { // a legenda do Copernicus vem em JSON (mapa de cores
   const L0 = cmLeg[k];
   if (L0 === undefined) {
     cmLeg[k] = 'loading';
-    getJSON(cmQ(th, {REQUEST: 'GetLegend', FORMAT: 'application/json'})).then(j => { cmLeg[k] = j.continuous || null; if (TH.cur === k) renderDetails(); }).catch(() => { cmLeg[k] = null; });
+    getJSON(cmQ(th, {REQUEST: 'GetLegend', FORMAT: 'application/json'})).then(j => { cmLeg[k] = j.continuous || null; if (TH.cur === k || OV.k === k) renderDetails(); }).catch(() => { cmLeg[k] = null; });
   }
   if (!L0 || L0 === 'loading') return '<span class="muted">Carregando a escala…</span>';
   const c = L0.cmap.colorMap, lo = L0.valueMin, hi = L0.valueMax, tick = i => L0.logScale ? lo * (hi / lo) ** (i / 4) : lo + (hi - lo) * i / 4;
   return `<div class="grad" style="background:linear-gradient(90deg,${Array.from({length: 9}, (_, i) => `rgb(${c[Math.round(i * (c.length - 1) / 8)]})`).join()})"></div>
     <div class="grad-l">${[0, 1, 2, 3, 4].map(i => `<span>${fmt(tick(i), th.dec ?? 1)}</span>`).join('')}</div>`;
 }
-function themeLegend(th) {
+function themeLegend(th, k = TH.cur, t = TH.times?.[TH.i]) {
   const lg = ecoLayer?.legend;
   if (th.eco && lg === 'teow') {
     const seen = new Set(S.recs.map(r => r._eco?.BIOME).filter(Boolean));
@@ -1260,19 +1402,24 @@ function themeLegend(th) {
   }
   if (th.eco && lg === 'meow') return '<span class="muted">Cores por reino biogeográfico. Passe o mouse para ver o nome.</span>';
   if (th.eco && lg?.mx) return `<div class="grad" style="background:linear-gradient(90deg,#e3e7fc,#2277ff,#04123f)"></div><div class="grad-l"><span>1</span><span>${lg.mx} ${lg.multi ? 'espécies' : 'registros'}</span></div>`;
-  if (TH.cur === 'mb' && S.mbLeg) return `<div class="leg-cats">${S.mbLeg.l1.map(c => `<div class="leg-row" title="${esc(c.kids.join(', '))}"><span class="sq" style="background:${c.color}"></span><span>${esc(c.name)}</span></div>`).join('')}</div>`;
+  if (k === 'mb' && S.mbLeg) return `<div class="leg-cats">${S.mbLeg.l1.map(c => `<div class="leg-row" title="${esc(c.kids.join(', '))}"><span class="sq" style="background:${c.color}"></span><span>${esc(c.name)}</span></div>`).join('')}</div>`;
   if (th.wx) return gradBar(th.stops, th.dec || 0);
-  if (th.cm) return cmLegend(TH.cur, th);
+  if (th.cm) return cmLegend(k, th);
   const note = th.leg ? `<span class="muted">${th.leg}</span>` : '';
   if (th.legImg) return `<img alt="" class="leg-img" src="${th.legImg}">${note}`;
   if (th.gl) return `<div class="grad" style="background:linear-gradient(90deg,${th.gl.c.join()})"></div><div class="grad-l">${th.gl.l.map(t => `<span>${t}</span>`).join('')}</div>${note}`;
-  if (th.layer) return uvLegend(typeof th.layer === 'function' ? th.layer(TH.times[TH.i]) : th.layer);
+  if (th.layer) return uvLegend(typeof th.layer === 'function' ? th.layer(t) : th.layer);
   return `<span class="muted">${th.leg || 'Clique no mapa para ver o valor no local.'}</span>`;
 }
 function renderDetails() {
   renderRail(); renderWmsOp();
   const v = $('colorBy').value, o = [], th = THEMES[TH.cur];
   if (th) o.push(`<div><h4>${ti(th.ic)} ${esc(th.n)}${th.u || th.unit ? `<small>${esc(th.u || th.unit)}</small>` : ''}</h4>${themeLegend(th)}<div class="src">${esc(th.src)}</div></div>`);
+  const ot = THEMES[OV.k];
+  if (ot) o.push(`<div class="leg-ov"><h4>${ti('stack-push')} Por cima: ${esc(ot.n)}<button class="icon-btn" id="ovOff" title="Tirar de cima">${ti('x')}</button></h4>
+    ${OV.flow ? `<span class="muted">Riscos azul-claros: direção e força (${esc(ot.u)}), na mesma hora da camada de baixo.</span>` : themeLegend(ot, OV.k, OV.tt)}
+    <label class="op-row"><span>Opacidade</span><input type="range" id="ovOp" min="0.15" max="1" step="0.05" value="${OV.op[OV.k] ?? (OV.flow ? 1 : .7)}"></label>
+    <div class="src">${esc(ot.src)}${OV.tt != null && ot.lbl ? ' · ' + esc(ot.lbl(OV.tt)) : ''}</div></div>`);
   if (S.recs.length && $('lPts').checked) {
     const lbl = $('colorBy').selectedOptions[0].text;
     o.push(scale ? `<div><h4>${ti('paw')} Pontos · ${lbl}</h4><div class="grad" style="background:linear-gradient(90deg,${RAMPS[v]})"></div><div class="grad-l"><span>${fmt(scale.lo, 0)}</span><span>${fmt(scale.hi, 0)}</span></div></div>`
@@ -1283,6 +1430,10 @@ function renderDetails() {
   const wms = $$('.wms:checked'); // legendas oficiais dos GeoServers (MMA/ICMBio/MapBiomas), recolhidas para não ocupar o mapa
   if (wms.length) o.push(`<details><summary>${ti('shield-check')} Limites ligados (${wms.length}): ${esc(wms.map(lblOf).join(', '))}</summary>${wms.map(c => `<img alt="" class="leg-img" src="${wmsUrl(c)}?${qs({service: 'WMS', version: '1.1.1', request: 'GetLegendGraphic', format: 'image/png', layer: c.value, legend_options: 'fontName:Inter;fontAntiAliasing:true;fontSize:11;dx:4'})}">`).join('')}</details>`);
   $('detailsBody').innerHTML = o.join('');
+  if (ot) {
+    $('ovOff').onclick = () => ovSet('');
+    $('ovOp').oninput = e => { const v = OV.op[OV.k] = +e.target.value; if (OV.flow) FL.ov.cv.style.opacity = v; else OV.layer?.setOpacity(v); };
+  }
   $('details').hidden = !o.length;
 }
 
@@ -1355,13 +1506,13 @@ async function airClimate(recs, tok) {
 // ---------- informações da espécie ----------
 async function loadInfo(t) {
   if (!t.key) return;
-  const [sp, vern, iucn, wiki] = await Promise.all([
+  const [sp, vern, iucn, wiki, hab] = await Promise.all([
     getJSON(`${GBIF}/species/${t.key}`).catch(() => ({})),
     getJSON(`${GBIF}/species/${t.key}/vernacularNames?limit=100`).then(r => r.results).catch(() => []),
     getJSON(`${GBIF}/species/${t.key}/iucnRedListCategory`).catch(() => null),
-    wikiSummary(t.name)]);
+    wikiSummary(t.name), habitat(t.name, t.key)]);
   const pt = [...new Set(vern.filter(v => ['por', 'pt'].includes(v.language)).map(v => v.vernacularName.toLowerCase()))];
-  S.info = {sp, pt, iucn, wiki};
+  S.info = {sp, pt, iucn, wiki, hab};
 }
 async function wikiSummary(name) {
   for (const lang of ['pt', 'en']) {
@@ -1493,12 +1644,49 @@ function heatmap(s) {
     <div class="heat-leg">menos ${['#e3e7fc', '#9cc0ff', '#2277ff', '#0056ff', '#04123f'].map(c => `<i style="background:${c}"></i>`).join('')} mais</div>`;
 }
 
+// chips de espécies com contagem; cada um abre a ficha (ficha.js). A chave GBIF vem dos registros, quando há
+const spKey = n => S.recs.find(r => r.sci === n && r.sk)?.sk || '';
+const spChips = (sp, max = 24) => `<div class="sp-chips">${sp.slice(0, max).map(([n, c]) => `<button class="chip" data-ficha data-n="${esc(n)}" data-k="${spKey(n)}">${ti('id-badge-2')} <i>${esc(n)}</i> <small>${fmt(c, 0)}</small></button>`).join('')}${sp.length > max ? `<span class="muted">+${sp.length - max}</span>` : ''}</div>`;
+// ---------- painel por ambiente: o que olhar numa espécie marinha, terrestre ou de água doce ----------
+const GUIDE = {
+  mar: {q: ['Em que temperatura, salinidade e profundidade ela aparece? Use o <b>Perfil ambiental</b> abaixo.', 'Fica perto da costa ou em mar aberto? Os registros acompanham a <b>clorofila</b> (comida) e as <b>correntes</b>?',
+    'A área está aquecendo ou acidificando (temperatura do mar, pH, oxigênio)?', 'Quanto dos registros cai em UCs marinhas? Há pressão humana na costa (luzes, gente)?'],
+    th: ['thetao', 'chl', 'curM', 'bat', 'ph', 'o2', 'meowR']},
+  terra: {q: ['Que clima ela ocupa (temperatura, chuva, meses secos)? Use o <b>Perfil ambiental</b> abaixo.', 'Os locais ainda têm vegetação nativa ou viraram pasto e lavoura (<b>MapBiomas</b>, ano a ano)?',
+    'Há <b>perda de floresta</b> recente perto dos registros?', 'Quanta gente vive no entorno (zoonoses, atropelamento, conflito)?'],
+    th: ['mb', 'loss', 'ndvi', 'lst', 'pop', 'teowR']},
+  doce: {q: ['Rios e lagos dependem da chuva da bacia: veja a <b>chuva por satélite</b> e a sazonalidade dos registros.', 'A mata ciliar e o uso da terra no entorno estão preservados (<b>MapBiomas</b>, perda de floresta)?',
+    'A temperatura do ar e da superfície sobe na região?', 'Há cidades e gente rio acima (esgoto, barragens, pesca)?'],
+    th: ['imerg', 'mb', 'loss', 'ndvi', 'temp', 'pop', 'teowR']},
+  misto: {q: ['A espécie usa o mar e a terra (ou a água salobra): analise cada parte separada com o botão <b>No mar / Em terra</b> acima.', 'No mar: temperatura, clorofila e correntes. Em terra: cobertura da terra e clima.',
+    'Locais na costa (praias, mangues, estuários) concentram os dois ambientes e as pressões humanas.'],
+    th: ['thetao', 'chl', 'mb', 'loss', 'pop', 'meowR', 'teowR']},
+};
+function realmBar(R) {
+  const [n, ic, c] = REALM[R.kind], h = R.h, tags = h?.known ? ['mar', 'doce', 'terra'].filter(k => h[k]).map(k => REALM[k][0].toLowerCase()).join(', ') : '';
+  const seg = R.n.mar && R.n.terra && (F.realm || R.kind === 'misto' || Math.min(R.n.mar, R.n.terra) >= .05 * (R.n.mar + R.n.terra)) ? `<nav class="seg mini realm-seg">${[['', 'Todos'], ['mar', `No mar (${fmt(R.n.mar, 0)})`], ['terra', `Em terra (${fmt(R.n.terra, 0)})`]]
+    .map(([k, t]) => `<button data-realm="${k}" class="${F.realm === k ? 'on' : ''}">${k ? ti(REALM[k][1]) : ''} ${t}</button>`).join('')}</nav>` : '';
+  const odd = R.kind === 'mar' && R.n.terra ? `${fmt(R.n.terra, 0)} registros caem em terra ou na linha de costa (praias, mangues, o contorno simplificado do mapa ou erro de coordenada).`
+    : (R.kind === 'terra' || R.kind === 'doce') && R.n.mar ? `${fmt(R.n.mar, 0)} registros caem no mar ou na linha de costa (o contorno simplificado do mapa ou erro de coordenada).` : '';
+  return `<div class="realm-bar"><span class="realm-tag" style="--c:${c}">${ti(ic)} ${n}</span><span class="muted">${tags ? 'habitat: ' + tags + ' · ' : ''}definido ${R.by}${odd ? ' · ' + odd : ''}</span>${seg}</div>`;
+}
+function guideCard(R, part) {
+  const g = GUIDE[part || R.kind] || GUIDE.terra;
+  return `<div class="card s12 guide"><h3>${ti('compass')} O que analisar <span class="sub">${REALM[part || R.kind][0].toLowerCase()} · camadas e perguntas que fazem sentido para este ambiente</span></h3>
+    <div class="guide-grid"><ol>${g.q.map(q => `<li>${q}</li>`).join('')}</ol>
+    <div><b>Abrir no mapa</b><div class="guide-th">${g.th.filter(k => THEMES[k]).map(k => `<button class="chip" data-th="${k}" title="${esc(THEMES[k].src)}">${ti(THEMES[k].ic)} ${esc(THEMES[k].n)}</button>`).join('')}</div>
+    <p class="muted">Dica: no mapa, o botão ${ti('stack-push')} ao lado de cada camada põe uma segunda por cima (ex.: correntes sobre a temperatura do mar).</p></div></div></div>`;
+}
 function renderStats(el, s) {
   const yrs = Object.keys(s.byYear).map(Number).sort((a, b) => a - b), top = sortDesc(s.ds).slice(0, 8), sp = sortDesc(s.species), lc = S.lc, obis = S.recSrc === 'obis';
   const d = s.prev10 ? (s.last10 - s.prev10) / s.prev10 : null;
   const delta = d == null ? '' : `<span class="delta ${d >= 0 ? 'up' : 'down'}"><i class="bi bi-arrow-${d >= 0 ? 'up' : 'down'}-right"></i> ${fmt(Math.abs(100 * d), 0)}% na última década</span>`;
   const ecoTop = sortDesc(s.eco).slice(0, 10), biomes = sortDesc(s.biome), prov = sortDesc(s.mprov).slice(0, 8), ok = S.recs.length - s.bad;
-  el.innerHTML = `<div class="wrap"><div class="card hero"><h2>${gi(grpIc(S.taxon))} <i>${esc(S.taxon.name)}</i></h2><p class="lead">Gráficos dos ${fmt(s.recs.length, 0)} registros que passam nos filtros. <b>Clique numa barra ou fatia</b> para filtrar o mapa e todo o painel (clique de novo para soltar; Shift+clique no ano marca um intervalo).</p></div><div class="dash">
+  const RL = realm(), K = RL.kind, part = F.realm || (K === 'misto' ? '' : K === 'mar' ? 'mar' : 'terra'), land = part !== 'mar', sea = part !== 'terra' && part !== 'doce';
+  const useProv = !biomes.length || (!land && prov.length);
+  el.innerHTML = `<div class="wrap"><div class="card hero"><h2>${gi(grpIc(S.taxon))} <i>${esc(S.taxon.name)}</i></h2><p class="lead">Gráficos dos ${fmt(s.recs.length, 0)} registros que passam nos filtros. <b>Clique numa barra ou fatia</b> para filtrar o mapa e todo o painel (clique de novo para soltar; Shift+clique no ano marca um intervalo).</p>
+    ${realmBar(RL)}</div><div class="dash">
+    ${guideCard(RL, part)}
     ${kpi('database', s.recs.length.toLocaleString('pt-BR'), 'registros analisados', delta)}
     ${kpi('map-pins', s.uni.length.toLocaleString('pt-BR'), 'locais distintos')}
     ${kpi('calendar', s.yr.join('–'), 'período dos registros')}
@@ -1513,7 +1701,7 @@ function renderStats(el, s) {
     <div class="card s4"><h3>Indicadores</h3>
       ${pbar('Registros no Brasil em Unidades de Conservação', s.uc ? s.uc.pi + s.uc.us : 0, s.uc?.n || 0, '#1e9e5a')}
       ${pbar('… em Proteção Integral', s.uc?.pi || 0, s.uc?.n || 0, '#2277ff')}
-      ${pbar('Locais em terra com vegetação nativa hoje', lc?.land ? lc.nat1 : 0, lc?.land || 0, '#2db87a')}
+      ${land ? pbar('Locais em terra com vegetação nativa hoje', lc?.land ? lc.nat1 : 0, lc?.land || 0, '#2db87a') : ''}
       ${pbar('Registros sem alerta de qualidade', ok, S.recs.length, '#5c9bff')}
       ${pbar('Coordenadas com incerteza ≤ 10 km', S.recs.length - s.bigUnc, S.recs.length, '#9cc0ff')}
       <p class="muted">${!s.uc ? 'Calculando proteção… ' : s.uc.n < s.recs.length ? `${fmt(s.recs.length - s.uc.n, 0)} registros fora do Brasil não entram na conta de UCs. ` : ''}${lc === 'loading' ? 'Consultando o MapBiomas…' : ''}</p></div>
@@ -1528,25 +1716,25 @@ function renderStats(el, s) {
 
     <div class="card s6"><h3>Ecorregiões com mais registros</h3>${S.ecoDone ? (ecoTop.length ? `<canvas id="cEco" height="${70 + ecoTop.length * 24}"></canvas>` : '<p class="muted">Nenhum registro dentro das ecorregiões.</p>') : '<p class="muted">Cruzando com as ecorregiões…</p>'}
       ${howto('Ecorregiões terrestres do WWF e marinhas MEOW (Spalding et al. 2007), como no fluxo do gbif-ecoregions. Ecorregiões agrupam comunidades com história e ambiente parecidos: são a escala natural para comparar riqueza e lacunas de amostragem.')}</div>
-    <div class="card s6"><h3>${biomes.length ? 'Biomas (WWF)' : 'Províncias marinhas (MEOW)'}</h3>${S.ecoDone && (biomes.length || prov.length) ? '<canvas id="cBiome" height="220"></canvas>' : '<p class="muted">…</p>'}
+    <div class="card s6"><h3>${useProv ? 'Províncias marinhas (MEOW)' : 'Biomas (WWF)'}</h3>${S.ecoDone && (biomes.length || prov.length) ? '<canvas id="cBiome" height="220"></canvas>' : '<p class="muted">…</p>'}
       ${howto('Distribuição dos registros entre os grandes biomas terrestres do WWF (Olson et al. 2001) ou, para espécies marinhas, entre as províncias biogeográficas do MEOW.')}</div>
 
-    <div class="card s7"><h3>Cobertura da terra nos locais de ocorrência <span class="sub">MapBiomas 1985–2025</span></h3>${
+    ${land ? `<div class="card s7"><h3>Cobertura da terra nos locais de ocorrência <span class="sub">MapBiomas 1985–2025</span></h3>${
       lc === 'loading' ? '<p class="muted">Consultando o histórico MapBiomas de até 30 locais…</p>'
       : !lc?.n ? `<p class="muted">${lc?.err ? 'A API do MapBiomas não respondeu.' : 'Sem locais em território brasileiro para consultar.'}</p>`
       : `<canvas id="cLC" height="150"></canvas><p class="muted">Amostra de ${lc.n} locais, ${lc.land} em terra. Vegetação nativa nos locais em terra: ${pct(lc.nat0, lc.land0)} em ${lc.years[0]} → ${pct(lc.nat1, lc.land)} em ${lc.years[lc.years.length - 1]}. ${lc.lost} local(is) trocaram vegetação nativa por uso agropecuário ou área não vegetada.</p>`}
-      ${howto('Para cada local sorteado, o MapBiomas informa a classe do pixel de 30 m em cada ano desde 1985. As faixas mostram quantos locais estavam em cada classe. Em espécies marinhas, a maioria aparece como “Corpo d’água” ou sem dado.')}</div>
-    <div class="card s5"><h3>Proteção em Unidades de Conservação <span class="sub">registros no Brasil</span></h3>${!s.uc ? '<p class="muted">Calculando…</p>' : s.uc.n ? '<canvas id="cUC" height="190"></canvas>' : '<p class="muted">Nenhum registro no Brasil: o cadastro de UCs (CNUC) só cobre o território brasileiro.</p>'}
+      ${howto('Para cada local sorteado, o MapBiomas informa a classe do pixel de 30 m em cada ano desde 1985. As faixas mostram quantos locais estavam em cada classe. Locais na água aparecem como “Corpo d’água”: em espécies de água doce, olhe a mata ciliar e o uso da terra no entorno.')}</div>` : ''}
+    <div class="card s${land ? 5 : 12}"><h3>Proteção em Unidades de Conservação <span class="sub">registros no Brasil</span></h3>${!s.uc ? '<p class="muted">Calculando…</p>' : s.uc.n ? '<canvas id="cUC" height="190"></canvas>' : '<p class="muted">Nenhum registro no Brasil: o cadastro de UCs (CNUC) só cobre o território brasileiro.</p>'}
       ${howto('Proteção Integral: parques, reservas biológicas, estações ecológicas. Uso Sustentável: APAs, RESEX, FLONAs. Só UCs brasileiras do CNUC.')}</div>
 
-    <div class="card s12"><h3>Clima no dia do registro <span class="sub">ERA5 via Open-Meteo · temperatura média do ar e chuva do dia</span></h3>${airCard()}
-      ${howto('Para uma amostra de até 40 registros com data completa, a reanálise ERA5 (0,25°, ~28 km) informa a temperatura média do ar a 2 m e a chuva acumulada no dia da observação. A faixa entre 5% e 95% aproxima o nicho climático realizado; compare com o clima disponível na região antes de concluir. O clima de todos os registros, mês a mês, sai do script ERA5 de Análise › Exportar.')}</div>
+    ${land ? `<div class="card s12"><h3>Clima no dia do registro <span class="sub">ERA5 via Open-Meteo · temperatura média do ar e chuva do dia</span></h3>${airCard()}
+      ${howto('Para uma amostra de até 40 registros com data completa, a reanálise ERA5 (0,25°, ~28 km) informa a temperatura média do ar a 2 m e a chuva acumulada no dia da observação. A faixa entre 5% e 95% aproxima o nicho climático realizado; compare com o clima disponível na região antes de concluir. O clima de todos os registros, mês a mês, sai do script ERA5 de Análise › Exportar.')}</div>` : ''}
     <div class="card s4"><h3>Distribuição por latitude</h3><canvas id="cLat" height="230"></canvas>${howto('Registros por faixa de 1° de latitude: mostra limites norte–sul e lacunas de amostragem.')}</div>
     <div class="card s4"><h3>Tipo de registro</h3><canvas id="cBasis" height="230"></canvas>${howto('Observação humana, espécime de museu, sensor/telemetria, amostra de material… Telemetria concentra muitos pontos de poucos indivíduos.')}</div>
     <div class="card s4"><h3>Principais conjuntos de dados</h3><canvas id="cDs" height="230"></canvas>${howto('Quando um único conjunto domina, os padrões podem refletir o desenho daquele estudo.')}</div>
-    ${sp.length > 1 ? `<div class="card s12"><h3>Espécies no táxon consultado</h3><canvas id="cSp" height="${50 + Math.min(12, sp.length) * 20}"></canvas></div>` : ''}
+    ${sp.length > 1 ? `<div class="card s12"><h3>Espécies no táxon consultado <span class="sub">clique numa ficha para ver as informações de cada uma</span></h3><canvas id="cSp" height="${50 + Math.min(12, sp.length) * 20}"></canvas>${spChips(sp)}</div>` : ''}
     </div>
-    ${obis ? `<details class="fold" open><summary>Ambiente nos locais de ocorrência <small>dados do OBIS</small></summary><div class="fold-body"><div class="dash">
+    ${obis && sea ? `<details class="fold" open><summary>Ambiente nos locais de ocorrência <small>dados do OBIS</small></summary><div class="fold-body"><div class="dash">
       ${[['sst', 'Temperatura da superfície do mar (°C)'], ['sss', 'Salinidade'], ['bathymetry', 'Profundidade do local (m)'], ['shoredistance', 'Distância da costa (km)']].map(([k, n]) => {
         const a = s.env(k);
         return `<div class="s6"><h3>${n}</h3><div class="kv"><span>mín · 5% · mediana · 95% · máx</span><span>${[0, .05, .5, .95, 1].map(q => fmt(quantile(a, q) / (k === 'shoredistance' ? 1000 : 1))).join(' · ')}</span></div><canvas id="h_${k}" height="110"></canvas></div>`;
@@ -1571,13 +1759,13 @@ function renderStats(el, s) {
     options: {interaction: {mode: 'nearest', intersect: false}, plugins: {legend: {display: false}}, scales: {r: {ticks: {display: false}, grid: {color: 'rgba(4,18,63,.1)'}, angleLines: {color: 'rgba(4,18,63,.1)'}}}}}, M.map((_, i) => i + 1));
   if (S.ecoDone && ecoTop.length) chart('cEco', {type: 'bar', data: {labels: ecoTop.map(([k]) => k.length > 34 ? k.slice(0, 32) + '…' : k), datasets: [{data: ecoTop.map(([, n]) => n), backgroundColor: F.eco ? ecoTop.map(([k]) => k === F.eco ? '#04123f' : 'rgba(0,86,255,.28)') : grad('#0056ff', '#2277ff')}]}, options: {...noLegend, indexAxis: 'y'}}, ecoTop.map(([k]) => k));
   if (S.ecoDone && (biomes.length || prov.length)) {
-    const src2 = biomes.length ? biomes.map(([k, n]) => [BIOMES[k]?.[0] || k, n, BIOMES[k]?.[1]]) : prov.map(([k, n], i) => [k, n, CAT[i % CAT.length]]);
+    const src2 = !useProv ? biomes.map(([k, n]) => [BIOMES[k]?.[0] || k, n, BIOMES[k]?.[1]]) : prov.map(([k, n], i) => [k, n, CAT[i % CAT.length]]);
     chart('cBiome', {type: 'doughnut', data: {labels: src2.map(x => x[0]), datasets: [{data: src2.map(x => x[1]), backgroundColor: src2.map(x => x[2]), borderColor: '#ffffff', borderWidth: 3}]},
       options: {cutout: '62%', plugins: {legend: {position: 'right'}}}});
   }
   if (lc?.n) chart('cLC', {type: 'line', data: {labels: lc.years, datasets: Object.entries(lc.series).filter(([, dd]) => dd.some(Boolean)).map(([n, dd]) => ({label: n, data: dd, fill: true, backgroundColor: lc.colors[n] + 'd0', borderColor: lc.colors[n], pointRadius: 0, borderWidth: 1}))},
     options: {interaction: {mode: 'index', intersect: false}, scales: {y: {stacked: true, title: {display: true, text: 'locais'}}, x: {grid: {display: false}, ticks: {maxTicksLimit: 9}}}}});
-  if (s.air?.n) { const a = S.air.t, lo = Math.floor(Math.min(...a)), hi = Math.ceil(Math.max(...a)), bins = hi > lo ? Array.from({length: hi - lo + 1}, (_, i) => lo + i) : [lo];
+  if (land && s.air?.n) { const a = S.air.t, lo = Math.floor(Math.min(...a)), hi = Math.ceil(Math.max(...a)), bins = hi > lo ? Array.from({length: hi - lo + 1}, (_, i) => lo + i) : [lo];
     chart('cAir', {type: 'bar', data: {labels: bins.map(b => b + '°'), datasets: [{data: bins.map(b => a.filter(v => Math.floor(v) === b).length), backgroundColor: bins.map(b => rgbOf(scaleRGBA(T_STOPS, b)))}]}, options: {...noLegend, scales: {x: {grid: {display: false}, title: {display: true, text: 'temperatura média do ar no dia (°C)'}}}}}); }
   if (s.uc?.n) chart('cUC', {type: 'doughnut', data: {labels: ['Proteção Integral', 'Uso Sustentável', 'Fora de UC'], datasets: [{data: [s.uc.pi, s.uc.us, s.uc.n - s.uc.pi - s.uc.us], backgroundColor: [UCCOL[2], UCCOL[1], UCCOL[0]].map((c, i) => !['pi', 'us', 'out'].includes(F.uc) || ['pi', 'us', 'out'][i] === F.uc ? c : c + '40'), borderColor: '#ffffff', borderWidth: 3}]},
     options: {cutout: '62%', plugins: {legend: {position: 'right'}}}}, ['pi', 'us', 'out']);
@@ -1586,9 +1774,11 @@ function renderStats(el, s) {
   const bs = sortDesc(s.basis);
   chart('cBasis', {type: 'doughnut', data: {labels: bs.map(([k]) => basisPt(k)), datasets: [{data: bs.map(([, n]) => n), backgroundColor: bs.map(([k], i) => !F.basis.size || F.basis.has(k) ? CAT[i % CAT.length] : CAT[i % CAT.length] + '40'), borderColor: '#ffffff', borderWidth: 3}]}, options: {cutout: '62%', plugins: {legend: {position: 'bottom'}}}}, bs.map(([k]) => k));
   chart('cDs', {type: 'bar', data: {labels: top.map(([k]) => k.length > 28 ? k.slice(0, 26) + '…' : k), datasets: [{data: top.map(([, n]) => n), backgroundColor: top.map(([k]) => !F.ds || k === F.ds ? '#0056ff' : 'rgba(0,86,255,.28)')}]}, options: {...noLegend, indexAxis: 'y'}}, top.map(([k]) => k));
+  el.querySelectorAll('[data-th]').forEach(b => b.onclick = () => { setTheme(b.dataset.th); showView('mapa'); });
+  el.querySelectorAll('[data-realm]').forEach(b => b.onclick = () => { F.realm = b.dataset.realm; refineChanged(); });
   window.renderNiche?.(); window.renderOH?.(); // perfil ambiental (analise.js) e interface One Health (onehealth.js)
   if (sp.length > 1) chart('cSp', {type: 'bar', data: {labels: sp.slice(0, 12).map(([k]) => k), datasets: [{data: sp.slice(0, 12).map(([, n]) => n), backgroundColor: F.sp ? sp.slice(0, 12).map(([k]) => k === F.sp ? '#2db87a' : 'rgba(45,184,122,.28)') : grad('#2db87a', '#5c9bff')}]}, options: {...noLegend, indexAxis: 'y'}}, sp.slice(0, 12).map(([k]) => k));
-  if (obis) for (const k of ['sst', 'sss', 'bathymetry', 'shoredistance']) {
+  if (obis && sea) for (const k of ['sst', 'sss', 'bathymetry', 'shoredistance']) {
     const a = s.env(k).map(v => k === 'shoredistance' ? v / 1000 : v); if (!a.length) continue;
     const lo = quantile(a, .01), hi = quantile(a, .99), nb = 24, w = (hi - lo) / nb || 1, h = Array(nb).fill(0);
     a.forEach(v => { if (v >= lo && v <= hi) h[Math.min(nb - 1, Math.floor((v - lo) / w))]++; });
@@ -1625,12 +1815,14 @@ function renderFicha(el, s) {
           <div>Lista Vermelha IUCN (via GBIF)<br>${badge(i?.iucn?.code)} ${esc(IUCN[i?.iucn?.code] || 'sem avaliação')}</div>
           ${S.recSrc === 'obis' ? `<div>Categoria nos registros do OBIS<br>${badge(s.catSrc)} ${esc(IUCN[s.catSrc] || 'sem dado')}</div>` : ''}
           <div>Triagem pelo critério B<br>${badge(cb.slice(0, 2))} ${cb}</div>
+          <div>Ambiente<br>${(r => `<span class="realm-tag" style="--c:${REALM[r.kind][2]}">${ti(REALM[r.kind][1])} ${REALM[r.kind][0]}</span> <span class="muted">${r.by}</span>`)(realm())}</div>
         </div>
         ${w?.extract ? `<p>${esc(w.extract)}</p>` : ''}
-        <div class="links">${links.map(([u, n]) => `<a class="btn-out" target="_blank" rel="noopener" href="${esc(u)}">${n} <i class="bi bi-box-arrow-up-right"></i></a>`).join('')}</div>
+        <div class="links"><button class="btn" data-ficha data-n="${esc(t.name)}" data-k="${t.key || ''}">${ti('id-badge-2')} Ficha completa</button>${links.map(([u, n]) => `<a class="btn-out" target="_blank" rel="noopener" href="${esc(u)}">${n} <i class="bi bi-box-arrow-up-right"></i></a>`).join('')}</div>
         ${i?.iucn && s.catSrc && i.iucn.code !== s.catSrc ? `<p class="muted"><i class="bi bi-exclamation-triangle"></i> As categorias divergem: o OBIS pode trazer uma avaliação mais antiga. Confira a data na IUCN.</p>` : ''}
       </div>
     </div>
+    ${(t.rank || '').toUpperCase() !== 'SPECIES' && Object.keys(s.species).length > 1 ? `<div class="card"><h3>${ti('id-badge-2')} Espécies deste táxon nos registros <span class="sub">${Object.keys(s.species).length} espécies · abra a ficha de cada uma</span></h3>${spChips(sortDesc(s.species), 40)}</div>` : ''}
     ${oh.length ? `<div class="card oh"><h3>${ti('heartbeat')} Relevância One Health</h3>${oh.map(n => `<p>${esc(n)}</p>`).join('')}<p class="muted">Cruze com a cobertura da terra (MapBiomas) e o clima (ERA5, Análise › Exportar) para investigar risco de transmissão e sentinelas ambientais.</p></div>` : ''}
     <details class="fold" open><summary>Avaliação preliminar de risco <small>critério B da IUCN</small></summary><div class="fold-body">
       <div class="kv"><span>Extensão de ocorrência (EOO)</span><span>${fmt(s.eoo, 0)} km²</span><span>Área de ocupação (AOO)</span><span>${fmt(s.aoo, 0)} km²</span>
@@ -1670,7 +1862,8 @@ async function search() {
       <div class="muted">${esc([t.phylum, t.class, t.order, t.family].filter(Boolean).join(' › '))}</div>
       <div class="muted"><b style="color:var(--e700)">${fmt(t.n, 0)}</b> registros ${$('qBR').checked ? 'no Brasil' : 'no mundo'}</div>
       <div class="acts"><button class="btn" data-sp="${esc(t.canonicalName)}">${ti('map-pin')} Ver no mapa</button>
-        <button class="btn soft" data-st="${esc(t.canonicalName)}">${ti('chart-dots')} Painel</button></div></div>`;
+        <button class="btn soft" data-st="${esc(t.canonicalName)}">${ti('chart-dots')} Painel</button>
+        <button class="btn soft" data-ficha data-n="${esc(t.canonicalName || t.scientificName)}" data-k="${t.nubKey || t.key || ''}">${ti('id-badge-2')} Ficha</button></div></div>`;
   }).join('') || `<div class="card empty">${ti('mood-empty')}Nenhum resultado com registros no Brasil. Desmarque o filtro para ver todos.</div>`;
   out.querySelectorAll('[data-sp]').forEach(b => b.onclick = () => openTaxon(b.dataset.sp, 'gbif'));
   out.querySelectorAll('[data-st]').forEach(b => b.onclick = () => openTaxon(b.dataset.st, 'gbif', 'stats'));
@@ -1740,7 +1933,7 @@ async function here(more) {
     <ol class="sl">${H.rows.map((s, i) => `<li data-f="${esc(slug([s.sci, ...(s.pt || []), s.family, s.order, s.class].join(' ')))}"><span class="sl-n">${i + 1}</span>${tx(s)}
       <div class="sl-nm"><i>${esc(s.sci)}</i> ${s.cat ? badge(s.cat) : ''}<small>${esc([s.pt?.join(', '), s.family].filter(Boolean).join(' · ') || s.kingdom || '')}</small></div>
       <div class="sl-bar" title="${fmt(s.n, 0)} registros"><i style="width:${(Math.sqrt(s.n / max) * 100).toFixed(1)}%"></i><span>${fmt(s.n, 0)}</span></div>
-      <div class="sl-act"><button class="icon-btn" data-sp="${esc(s.sci)}" data-k="${s.key || ''}" title="Ver no mapa">${ti('map-pin')}</button><button class="icon-btn" data-st="${esc(s.sci)}" data-k="${s.key || ''}" title="Abrir no painel">${ti('chart-dots')}</button></div></li>`).join('')}</ol>
+      <div class="sl-act"><button class="icon-btn" data-ficha data-n="${esc(s.sci)}" data-k="${s.key || ''}" title="Ficha da espécie">${ti('id-badge-2')}</button><button class="icon-btn" data-sp="${esc(s.sci)}" data-k="${s.key || ''}" title="Ver no mapa">${ti('map-pin')}</button><button class="icon-btn" data-st="${esc(s.sci)}" data-k="${s.key || ''}" title="Abrir no painel">${ti('chart-dots')}</button></div></li>`).join('')}</ol>
     ${H.more ? `<button class="btn soft sl-more" id="hMore">${ti('chevrons-down')} Mostrar mais 30 espécies</button>` : ''}`;
   out.querySelectorAll('[data-sp]').forEach(b => b.onclick = () => openTaxon(b.dataset.sp, null, 'mapa', b.dataset.k));
   out.querySelectorAll('[data-st]').forEach(b => b.onclick = () => openTaxon(b.dataset.st, null, 'stats', b.dataset.k));
@@ -2104,14 +2297,15 @@ Export.table.toDrive({collection: amostra, description: 'mapbiomas_${S.taxon.nam
 }
 
 // ---------- estado na URL ----------
-function writeHash() { if (location.hash !== '#teste') history.replaceState(null, '', '#' + qs({sp: $('sp').value.trim(), src: src(), area: $('area').value, y0: $('y0').value, y1: $('y1').value, th: TH.cur})); }
+function writeHash() { if (location.hash !== '#teste') history.replaceState(null, '', '#' + qs({sp: $('sp').value.trim(), src: src(), area: $('area').value, y0: $('y0').value, y1: $('y1').value, th: TH.cur, ov: OV.k})); }
 function readHash() {
   const h = new URLSearchParams(location.hash.slice(1)); for (const k of ['sp', 'src', 'area', 'y0', 'y1']) if (h.has(k)) $(k).value = h.get(k);
+  S.ov0 = h.get('ov');
   return h.has('th') ? h.get('th') : null;
 }
 
 // ---------- início ----------
 const th0 = location.hash !== '#teste' ? readHash() : null;
 syncSrc(); renderBasemaps(); renderModel(); renderThemeLists(); renderDetails(); renderKChips(); markPreset(); renderFchips(); renderDock();
-S.th0p = setTheme(th0 ?? 'temp'); // abre com uma camada ambiental ao vivo, como o zoom.earth
+S.th0p = setTheme(th0 ?? 'temp').then(() => S.ov0 && ovSet(S.ov0)); // abre com uma camada ambiental ao vivo, como o zoom.earth
 if ($('sp').value.trim()) run(); // sem espécie na URL o mapa abre só com a camada; a busca fica no topo

@@ -16,12 +16,18 @@ Cada aba mostra uma coisa: **Mapa · Painel · Explorar · Análise · Projetos*
 - **Filtros** (botão no topo): onde, quando, fonte e refinar (meses, UC, conjunto de dados, qualidade). O número no botão conta os filtros ativos.
   Fonte automática: OBIS quando ele tem pelo menos metade dos registros do GBIF.
 - **Mapa** (estilo zoom.earth): barra de ícones à esquerda (espécies, tempo, oceano, terra, cidades, limites, mapa-base) abre a lista do grupo;
-  **uma camada ambiental por vez**, com transparência; limites por cima e os pontos sempre no topo. Embaixo, o tocador anima a camada
-  (horas, dias, anos) ou os registros da espécie; "sincronizar" liga o ano das camadas anuais ao da linha do tempo. Legenda escura no canto.
+  uma camada ambiental principal, com transparência, e uma **sobreposição** (botão ao lado de cada camada): blocos com transparência própria
+  ou, para vento, correntes e ondas, só as partículas animadas; ela segue o tempo da camada de baixo (quadro mais próximo). Limites por cima e os pontos sempre no topo.
+  Embaixo, o tocador anima a camada (horas, dias, anos) ou os registros da espécie, com velocidade 0,5×–4×: os quadros de imagem são pré-carregados
+  e se misturam (esmaecer de 0,5 s); tempo e clima corre contínuo, misturando as horas vizinhas da grade; os pontos da espécie entram e saem sem redesenhar o mapa.
+  "sincronizar" liga o ano das camadas anuais ao da linha do tempo. Legenda escura no canto.
   Clique no mapa: valor da camada no ponto com minigráfico no tempo (também nas camadas de satélite, MODIS, Hansen e SoilGrids), ecorregião, tempo agora, cobertura, mar, UCs e o botão para o Painel.
 - **Recorte 3D** (botão *3D* abaixo do zoom, como no topoexport): arraste um retângulo no mapa (ou *Usar a área visível*) e veja o relevo e o fundo do mar
   em 3D com a camada ambiental ligada por cima (tempo, oceano, MapBiomas, UrbVerde…) e as ocorrências da espécie. Satélite ou relevo colorido,
   exagero vertical, mar plano ou batimetria, câmera isométrica; passe o mouse para ler altitude e valor. Exporta STL (200 mm, impressão 3D), GLB (Blender) e PNG.
+  **Camadas em 3D** (esquema em andares acima do bloco, na ordem real): uso da terra, NDVI e temperatura do chão; temperatura, salinidade, pH, oxigênio e clorofila
+  do mar em 3–4 profundidades (Copernicus diário com `elevation`, cada placa só onde o mar é fundo o bastante); temperatura, chuva, umidade e o vento em partículas 3D
+  animadas no ar; correntes animadas sobre o mar do bloco. Cada andar tem rótulo e legenda.
 - Sem espécie na URL, o mapa abre só com a camada ambiental; os pontos da espécie entram no mapa página a página enquanto carregam.
 - **Atalhos** (abaixo do título, no mapa e nas páginas): últimos 10 anos, dentro de UCs, out–mar, abr–set, só observações e **Analisar uma área**
   (desenhe um retângulo: o painel conta só o que está dentro). Filtros aplicados pelos gráficos aparecem ali com ×.
@@ -30,8 +36,12 @@ Cada aba mostra uma coisa: **Mapa · Painel · Explorar · Análise · Projetos*
 - **Comparar** (no tocador, em camadas com anos/dias em imagem: MapBiomas, UrbVerde, oceano…): cortina antes/depois, um tempo de cada lado; arraste o meio.
 - Legenda recolhível (abre recolhida no celular).
 - **Painel**: ambiente do ponto escolhido (ar −7 a +7 dias; mar: ondas, correntes e temperatura −2 a +5 dias) e os gráficos da espécie.
+  **Ambiente da espécie**: marinha, terrestre, de água doce ou mar e terra, pelo habitat do WoRMS (via OBIS) e dos perfis do GBIF; sem eles, pela proporção de registros
+  em ecorregiões terrestres (WWF) e marinhas (MEOW). Com registros nos dois, **No mar / Em terra** filtra tudo. O cartão **O que analisar** traz perguntas e atalhos para as camadas
+  certas para aquele ambiente, e os cartões que não se aplicam somem (MapBiomas e clima do ar em espécies marinhas; ambiente do OBIS em terrestres).
   **Clique numa barra ou fatia** para filtrar mapa e painel (Shift+clique no gráfico de anos = intervalo); cada gráfico conta com os outros filtros e destaca a seleção.
-  **Perfil ambiental**: temperatura, chuva e altitude (mar: temperatura, salinidade e profundidade) nos locais da espécie × pontos sorteados na região,
+  **Perfil ambiental**: temperatura, chuva, altitude e meses secos (mar: temperatura, salinidade, profundidade e distância da costa) nos locais da espécie × pontos sorteados na região,
+  no meio (mar ou terra) do habitat da espécie, não da fonte dos dados,
   com a faixa ocupada (P10–P90) e o **mapa de adequabilidade** (envelope tipo BIOCLIM): onde o ambiente se parece com o dos locais conhecidos.
   **Interface One Health**: densidade populacional (GPW 2020) e luzes noturnas nos locais × pontos sorteados na região; perda de floresta (Hansen) no entorno,
   antes ou depois do registro; picos de registros por ano, com o conjunto de dados que os explica; registros isolados (erro ou expansão de área);
@@ -45,6 +55,9 @@ Cada aba mostra uma coisa: **Mapa · Painel · Explorar · Análise · Projetos*
     com temperatura agora, sensação, umidade, vento, média e chuva dos últimos 30 dias e faixa e chuva dos próximos 7 (Open-Meteo, várias coordenadas por consulta).
     Ordena por coluna e baixa em CSV/JSON. Limites: bioma = média de 4–5 pontos de amostra; UC = centro do retângulo envolvente (pode cair fora de UCs irregulares);
     ecorregião = um ponto interno; "Brasil" para ecorregiões usa um contorno simplificado do país.
+- **Ficha de cada organismo** (`ficha.js`): botão *ficha* nos pontos do mapa, nas listas do Explorar, na busca por nome, nas espécies do Painel e em Análise › Espécie
+  (que lista as espécies quando a consulta é um gênero ou família). Traz classificação, nomes populares, IUCN, ambiente, registros no mundo, no Brasil e no OBIS, período,
+  resumo da Wikipédia, descrições do GBIF, fotos de registros (com autor e licença), mapa mundial de densidade e a relevância One Health, com atalhos para o mapa e o painel.
 - **Análise › Exportar**: registros em CSV ou GeoJSON e **Agrupar e baixar** (uma ou duas colunas entre ecorregião, bioma, UC, ano, década, mês, espécie, família,
   conjunto de dados, tipo de registro e célula de 1°/0,1°; medidas: registros, espécies, locais, primeiro e último ano), em CSV, JSON e, por célula, grade GeoJSON.
 - **Visual**: paleta Royal Blue (#0056FF, #2277FF, preto, lavanda #E3E7FC, branco; degradês Futurewave e Midnight Surge) nos tokens do `app.css`;
@@ -88,6 +101,7 @@ Banco (Firestore, São Paulo): coleções `membros/{email}` (`papel`), `perfis/{
 - `clima.js`: Explorar › Clima dos lugares
 - `publicar.py`: publica o site no GitHub Pages
 - `equipe.js`: login, página Equipe, feedbacks e projetos na nuvem (Firebase) · `firestore.rules`: regras do banco
+- `ficha.js`: ficha individual de qualquer organismo (GBIF, WoRMS/OBIS, Wikipédia)
 - `equipe/hub.html`: o antigo Espaço da equipe no Claude, aposentado
 - Ícones de interface: Tabler Icons (webfont via jsdelivr); a pasta `icons/` e `ICONES-PROMPTS.md` não são mais usadas
 - `vendor/`: repositórios de referência (robis, obistools, IUCNN, MapBiomas, gbif-ecoregions)

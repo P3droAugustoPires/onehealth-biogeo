@@ -86,11 +86,12 @@ addEventListener('keydown', e => { if (e.key === 'Escape' && drawing) endDraw();
 // ponytail: amostra de até 60 locais e 60 pontos sorteados na região (fundo). Terra: ERA5 do último ano completo (Open-Meteo); mar: OBIS xylookup.
 // É um retrato do nicho realizado, não um modelo: para MaxEnt/biomod2 use o script R de Análise › Exportar.
 const NV = {land: [['t', 'Temperatura média anual', '°C', 1], ['p', 'Chuva anual', 'mm', 0], ['e', 'Altitude', 'm', 0]],
-  sea: [['t', 'Temperatura da superfície do mar', '°C', 1], ['s', 'Salinidade', '', 1], ['e', 'Profundidade', 'm', 0]]};
+  sea: [['t', 'Temperatura da superfície do mar', '°C', 1], ['s', 'Salinidade', '', 1], ['e', 'Profundidade', 'm', 0], ['d', 'Distância da costa', 'km', 0]]};
+NV.land.push(['m', 'Meses secos (< 60 mm)', 'meses', 0]);
 let NI = null; // {key, kind, box, vars: {t: {pres, bg}}, n}
 const nkey = () => `${S.taxon?.name}|${S.fv}`;
 function rng(seed) { let x = seed || 1; return () => (x = (x * 16807) % 2147483647) / 2147483647; } // sorteio repetível
-function locs(n) {
+function locs(n) { // o filtro No mar / Em terra do Painel já vem em used()
   const m = new Map(); used().forEach(r => m.set(r.lat.toFixed(1) + ',' + r.lon.toFixed(1), r));
   const a = [...m.values()], R = rng(a.length * 7 + 3);
   for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(R() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
@@ -109,17 +110,18 @@ async function climate(pts) { // [lat, lon] → [{t, p, e}] em lotes de 50
         toast(`Limite por minuto da Open-Meteo atingido; tentando de novo em ${20 * (k + 1)} s…`);
         await new Promise(f => setTimeout(f, 20000 * (k + 1))); }
     }
-    r.forEach(x => { const t = x.daily.temperature_2m_mean.filter(v => v != null), p = x.daily.precipitation_sum.filter(v => v != null);
-      out.push({t: t.length ? mean(t) : NaN, p: p.length ? p.reduce((s, v) => s + v, 0) : NaN, e: x.elevation}); });
+    r.forEach(x => { const t = x.daily.temperature_2m_mean.filter(v => v != null), p = x.daily.precipitation_sum.filter(v => v != null), ms = Array(12).fill(0);
+      x.daily.time.forEach((d, i) => { ms[+d.slice(5, 7) - 1] += x.daily.precipitation_sum[i] || 0; });
+      out.push({t: t.length ? mean(t) : NaN, p: p.length ? p.reduce((s, v) => s + v, 0) : NaN, e: x.elevation, m: p.length ? ms.filter(v => v < 60).length : NaN}); });
   }
   return out;
 }
 async function ocean(pts) { // OBIS xylookup aceita muitos pontos num POST
   const r = await fetch('https://api.obis.org/xylookup', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({points: pts.map(p => [p[1], p[0]])})}).then(x => { if (!x.ok) throw new Error('OBIS ' + x.status); return x.json(); });
-  return r.map(x => x.shoredistance > 0 ? {t: x.grids?.sstemperature ?? NaN, s: x.grids?.sssalinity ?? NaN, e: x.grids?.bathymetry ?? NaN} : {t: NaN, s: NaN, e: NaN});
+  return r.map(x => x.shoredistance > 0 ? {t: x.grids?.sstemperature ?? NaN, s: x.grids?.sssalinity ?? NaN, e: x.grids?.bathymetry ?? NaN, d: x.shoredistance / 1000} : {t: NaN, s: NaN, e: NaN, d: NaN});
 }
 async function calcNiche() {
-  const kind = S.recSrc === 'obis' ? 'sea' : 'land', pres = locs(60);
+  const kind = nicheKind(), pres = locs(60);
   if (pres.length < 5) return toast('Poucos locais distintos para um perfil (mínimo 5).');
   const la = pres.map(p => p[0]), lo = pres.map(p => p[1]), pad = Math.max(1, (Math.max(...la) - Math.min(...la)) * .1);
   const box = [Math.max(-80, Math.min(...la) - pad), Math.min(...lo) - pad, Math.min(80, Math.max(...la) + pad), Math.max(...lo) + pad], R = rng(pres.length * 13 + 1);
@@ -142,7 +144,7 @@ function nicheText([k, n, u, dec], v) {
 }
 window.renderNiche = () => {
   const el = $('nicheCard'); if (!el) return;
-  const kind = S.recSrc === 'obis' ? 'sea' : 'land', fresh = NI?.key === nkey();
+  const kind = nicheKind(), fresh = NI?.key === nkey() && NI.kind === kind;
   const head = `<h3>${ti('chart-histogram')} Perfil ambiental <span class="sub">onde a espécie vive × o que existe na região</span></h3>`;
   if (!fresh || (!NI.vars && !NI.busy && !NI.err)) {
     el.innerHTML = `${head}<div class="niche-intro"><p>Compara até 60 locais da espécie com pontos sorteados na mesma região, nas variáveis
@@ -232,7 +234,7 @@ function clip() {
 async function cmpShow() {
   const k = TH.cur, th = THEMES[k], l = await th.tiles(TH.times[CMP.i]); if (TH.cur !== k || !CMP.on) return;
   l.options.pane = 'cmp'; l.setOpacity(TH.op[k] ?? .85); l.addTo(map);
-  const old = CMP.l; CMP.l = l; await loaded(l); if (old && old !== CMP.l) map.removeLayer(old);
+  const old = CMP.l; CMP.l = l; await ready(l); if (old && old !== CMP.l) map.removeLayer(old);
   $('ttLbl2').textContent = tlbl(CMP.i); clip();
 }
 function cmpStart() {

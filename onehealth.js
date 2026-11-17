@@ -28,7 +28,7 @@ async function probe(p, sea) { // pessoas (GPW 2020), luz (Black Marble 2016) e,
 }
 const tileOrder = (a, b) => (Math.floor((a.lng + 180) / 0.7) - Math.floor((b.lng + 180) / 0.7)) || (b.lat - a.lat); // vizinhos seguidos reaproveitam os tiles em cache
 async function calcExposure() {
-  const sea = S.recSrc === 'obis', pres = sampleLocs(400);
+  const sea = nicheKind() === 'sea', pres = sampleLocs(400);
   if (pres.length < 5) return toast('Poucos locais distintos (mínimo 5).');
   const la = pres.map(p => p.lat), lo = pres.map(p => p.lng), pad = Math.max(1, (Math.max(...la) - Math.min(...la)) * .1);
   const box = [Math.max(-80, Math.min(...la) - pad), Math.min(...lo) - pad, Math.min(80, Math.max(...la) + pad), Math.max(...lo) + pad], R = rng(pres.length * 31 + 7);
